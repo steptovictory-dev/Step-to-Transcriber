@@ -18,8 +18,8 @@ class TranscriptSegment:
 
 def transcribe_audio(
     audio_path: Path,
-    model_name: str = 'large-v3',
-    language: str = 'ru',
+    model_name: str = 'turbo',
+    language: str | None = None,
     compute_type: str = 'float16',
 ) -> list[TranscriptSegment]:
     if not audio_path.exists():

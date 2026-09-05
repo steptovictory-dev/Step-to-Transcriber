@@ -50,3 +50,10 @@ def extract_audio_track(
                 wav_file.writeframes(audio.tobytes())
 
     return output_path
+
+def get_audio_track_count(video_path: Path) -> int:
+    if not video_path.exists():
+        raise FileNotFoundError(f'Файл не найден: {video_path}')
+
+    with av.open(str(video_path)) as container:
+        return len(container.streams.audio)

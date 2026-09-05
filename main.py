@@ -3,7 +3,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from src.audio import extract_audio_track
+from src.audio import extract_audio_track, get_audio_track_count
 from src.exporters import export_markdown, export_txt
 from src.transcriber import transcribe_audio
 
@@ -14,29 +14,25 @@ TRANSCRIBER_DIRECTORY = PROJECT_DIRECTORY.parent
 INPUT_DIRECTORY = TRANSCRIBER_DIRECTORY / 'input'
 OUTPUT_DIRECTORY = TRANSCRIBER_DIRECTORY / 'output'
 
-VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.mov','.webm'}
-AUDIO_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.flac', '.ogg', '.opus'}
+VIDEO_EXTENSIONS = {
+    '.mp4',
+    '.mkv',
+    '.mov',
+    '.webm',
+}
+
+AUDIO_EXTENSIONS = {
+    '.mp3',
+    '.wav',
+    '.m4a',
+    '.flac',
+    '.ogg',
+    '.opus',
+}
+
 MEDIA_EXTENSIONS = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
 
 MAX_VISIBLE_FILES = 10
-
-TRACK_OPTIONS = {
-    '1': {
-        'number': 1,
-        'name': 'Full Mix',
-        'description': 'системный звук + микрофон',
-    },
-    '2': {
-        'number': 2,
-        'name': 'Lecturer',
-        'description': 'только системный звук / преподаватель',
-    },
-    '3': {
-        'number': 3,
-        'name': 'Microphone',
-        'description': 'только микрофон',
-    },
-}
 
 MODEL_OPTIONS = {
     '1': {
@@ -153,15 +149,17 @@ def choose_media_file() -> Path | None:
         )
 
 
-def choose_audio_track() -> int | None:
+def choose_audio_track(
+    track_count: int,
+) -> int | None:
     print()
     print('Выберите аудиодорожку:')
     print()
 
-    for key, option in TRACK_OPTIONS.items():
+    for track_number in range(1, track_count + 1):
         print(
-            f'{key} — {option["name"]}: '
-            f'{option["description"]}'
+            f'{track_number} — '
+            f'Аудиодорожка {track_number}'
         )
 
     print()
@@ -169,18 +167,28 @@ def choose_audio_track() -> int | None:
     print()
 
     while True:
-        choice = input('Дорожка [0-3]: ').strip()
+        choice = input(
+            f'Дорожка [0-{track_count}]: '
+        ).strip()
 
         if choice == '0':
             return None
 
-        if choice in TRACK_OPTIONS:
-            return TRACK_OPTIONS[choice]['number']
+        if choice.isdigit():
+            track_number = int(choice)
 
-        print('Ошибка: введите 0, 1, 2 или 3.')
+            if 1 <= track_number <= track_count:
+                return track_number
+
+        print(
+            f'Ошибка: введите число '
+            f'от 0 до {track_count}.'
+        )
 
 
-def choose_model(previous_menu: str) -> str | None:
+def choose_model(
+    previous_menu: str,
+) -> str | None:
     print()
     print('Выберите режим обработки:')
     print()
@@ -406,8 +414,51 @@ def main() -> None:
             )
 
         if extension in VIDEO_EXTENSIONS:
+            track_count = get_audio_track_count(media_path)
+
+            if track_count == 0:
+                raise ValueError(
+                    'В видеофайле нет аудиодорожек.'
+                )
+
+            # Если в видео одна аудиодорожка,
+            # выбираем её автоматически.
+            if track_count == 1:
+                track_number = 1
+
+                print()
+                print(
+                    'Найдена одна аудиодорожка. '
+                    'Она выбрана автоматически.'
+                )
+
+                model_name = choose_model(
+                    'выбору файла'
+                )
+
+                if model_name is None:
+                    if args.media is None:
+                        continue
+
+                    print()
+                    print('Программа завершена.')
+                    return
+
+                process_media(
+                    media_path=media_path,
+                    track_number=track_number,
+                    model_name=model_name,
+                    output_directory=args.output.resolve(),
+                )
+
+                return
+
+            # Если аудиодорожек несколько,
+            # предлагаем выбрать нужную.
             while True:
-                track_number = choose_audio_track()
+                track_number = choose_audio_track(
+                    track_count
+                )
 
                 if track_number is None:
                     if args.media is None:
@@ -417,43 +468,43 @@ def main() -> None:
                     print('Программа завершена.')
                     return
 
-                while True:
-                    model_name = choose_model(
-                        'выбору аудиодорожки'
-                    )
+                model_name = choose_model(
+                    'выбору аудиодорожки'
+                )
 
-                    if model_name is None:
-                        break
-
-                    process_media(
-                        media_path=media_path,
-                        track_number=track_number,
-                        model_name=model_name,
-                        output_directory=args.output.resolve(),
-                    )
-
-                    return
-
-        else:
-            model_name = choose_model(
-                'выбору файла'
-            )
-
-            if model_name is None:
-                if args.media is None:
+                if model_name is None:
                     continue
 
-                print()
-                print('Программа завершена.')
+                process_media(
+                    media_path=media_path,
+                    track_number=track_number,
+                    model_name=model_name,
+                    output_directory=args.output.resolve(),
+                )
+
                 return
 
-            process_media(
-                media_path=media_path,
-                model_name=model_name,
-                output_directory=args.output.resolve(),
-            )
+            continue
 
+        model_name = choose_model(
+            'выбору файла'
+        )
+
+        if model_name is None:
+            if args.media is None:
+                continue
+
+            print()
+            print('Программа завершена.')
             return
+
+        process_media(
+            media_path=media_path,
+            model_name=model_name,
+            output_directory=args.output.resolve(),
+        )
+
+        return
 
 
 if __name__ == '__main__':

@@ -10,11 +10,26 @@ __pycache__/
 
 # Generated files
 output/
-*.wav
+
+# Media files
 *.mp4
+*.mkv
+*.mov
+*.webm
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.ogg
+*.opus
 
 # Environment variables
 .env
 
 # Test cache
 .pytest_cache/
+
+# PyInstaller
+build/
+dist/
+*.spec

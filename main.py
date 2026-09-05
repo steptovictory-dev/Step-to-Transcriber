@@ -8,8 +8,16 @@ from src.exporters import export_markdown, export_txt
 from src.transcriber import transcribe_audio
 
 
-OBS_DIRECTORY = Path.home() / 'Videos'
-VIDEO_EXTENSIONS = {'.mp4', '.mkv'}
+PROJECT_DIRECTORY = Path(__file__).resolve().parent
+TRANSCRIBER_DIRECTORY = PROJECT_DIRECTORY.parent
+
+INPUT_DIRECTORY = TRANSCRIBER_DIRECTORY / 'input'
+OUTPUT_DIRECTORY = TRANSCRIBER_DIRECTORY / 'output'
+
+VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.mov','.webm'}
+AUDIO_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.flac', '.ogg', '.opus'}
+MEDIA_EXTENSIONS = VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
+
 MAX_VISIBLE_FILES = 10
 
 TRACK_OPTIONS = {
@@ -44,15 +52,15 @@ MODEL_OPTIONS = {
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description='Локальная транскрибация записей OBS через faster-whisper.'
+        description='Локальная транскрибация видео и аудио через faster-whisper.'
     )
 
     parser.add_argument(
-        'video',
+        'media',
         nargs='?',
         type=Path,
         help=(
-            'Путь к видеофайлу OBS. '
+            'Путь к видео- или аудиофайлу. '
             'Если путь не указан, будет предложен выбор файла.'
         ),
     )
@@ -60,8 +68,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         '--output',
         type=Path,
-        default=Path('output'),
-        help='Папка для результатов. По умолчанию: output.',
+        default=OUTPUT_DIRECTORY,
+        help='Папка для результатов. По умолчанию: ../output.',
     )
 
     return parser.parse_args()
@@ -76,47 +84,48 @@ def format_duration(seconds: float) -> str:
     return f'{int(minutes)} мин. {seconds:.1f} сек.'
 
 
-def get_recent_recordings(
+def get_recent_media_files(
     directory: Path,
     limit: int = MAX_VISIBLE_FILES,
 ) -> list[Path]:
     if not directory.exists():
         raise FileNotFoundError(
-            f'Папка с записями не найдена: {directory}'
+            f'Папка с файлами не найдена: {directory}'
         )
 
-    recordings = [
+    media_files = [
         path
         for path in directory.iterdir()
         if path.is_file()
-        and path.suffix.lower() in VIDEO_EXTENSIONS
+        and path.suffix.lower() in MEDIA_EXTENSIONS
     ]
 
-    recordings.sort(
+    media_files.sort(
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
 
-    return recordings[:limit]
+    return media_files[:limit]
 
 
-def choose_video_file() -> Path | None:
-    recordings = get_recent_recordings(OBS_DIRECTORY)
+def choose_media_file() -> Path | None:
+    media_files = get_recent_media_files(INPUT_DIRECTORY)
 
-    if not recordings:
+    if not media_files:
         raise FileNotFoundError(
-            f'В папке {OBS_DIRECTORY} не найдено записей OBS.'
+            f'В папке {INPUT_DIRECTORY} '
+            f'не найдено поддерживаемых файлов.'
         )
 
     print()
-    print('Выберите запись OBS:')
+    print('Выберите файл:')
     print()
 
-    for index, recording in enumerate(recordings, start=1):
-        size_mb = recording.stat().st_size / (1024 * 1024)
+    for index, media_file in enumerate(media_files, start=1):
+        size_mb = media_file.stat().st_size / (1024 * 1024)
 
         print(
-            f'{index} — {recording.name} '
+            f'{index} — {media_file.name} '
             f'({size_mb:.1f} MB)'
         )
 
@@ -126,7 +135,7 @@ def choose_video_file() -> Path | None:
 
     while True:
         choice = input(
-            f'Файл [0-{len(recordings)}]: '
+            f'Файл [0-{len(media_files)}]: '
         ).strip()
 
         if choice == '0':
@@ -135,12 +144,12 @@ def choose_video_file() -> Path | None:
         if choice.isdigit():
             index = int(choice)
 
-            if 1 <= index <= len(recordings):
-                return recordings[index - 1].resolve()
+            if 1 <= index <= len(media_files):
+                return media_files[index - 1].resolve()
 
         print(
             f'Ошибка: введите число '
-            f'от 0 до {len(recordings)}.'
+            f'от 0 до {len(media_files)}.'
         )
 
 
@@ -171,7 +180,7 @@ def choose_audio_track() -> int | None:
         print('Ошибка: введите 0, 1, 2 или 3.')
 
 
-def choose_model() -> str | None:
+def choose_model(previous_menu: str) -> str | None:
     print()
     print('Выберите режим обработки:')
     print()
@@ -183,7 +192,7 @@ def choose_model() -> str | None:
         )
 
     print()
-    print('0 — Назад к выбору аудиодорожки')
+    print(f'0 — Назад к {previous_menu}')
     print()
 
     while True:
@@ -198,11 +207,29 @@ def choose_model() -> str | None:
         print('Ошибка: введите 0, 1 или 2.')
 
 
-def process_video(
-    video_path: Path,
-    track_number: int,
+def save_results(
+    segments,
+    txt_path: Path,
+    md_path: Path,
+    title: str,
+) -> None:
+    export_txt(
+        segments=segments,
+        output_path=txt_path,
+    )
+
+    export_markdown(
+        segments=segments,
+        output_path=md_path,
+        title=title,
+    )
+
+
+def process_media(
+    media_path: Path,
     model_name: str,
     output_directory: Path,
+    track_number: int | None = None,
 ) -> None:
     total_start = time.perf_counter()
 
@@ -211,49 +238,106 @@ def process_video(
         exist_ok=True,
     )
 
-    transcript_name = (
-        f'{video_path.stem}_'
-        f'track{track_number}_'
-        f'{model_name}'
-    )
+    is_video = media_path.suffix.lower() in VIDEO_EXTENSIONS
+
+    if is_video:
+        if track_number is None:
+            raise ValueError(
+                'Для видео необходимо выбрать аудиодорожку.'
+            )
+
+        transcript_name = (
+            f'{media_path.stem}_'
+            f'track{track_number}_'
+            f'{model_name}'
+        )
+    else:
+        transcript_name = (
+            f'{media_path.stem}_'
+            f'{model_name}'
+        )
 
     txt_path = output_directory / f'{transcript_name}.txt'
     md_path = output_directory / f'{transcript_name}.md'
 
     print()
     print('Параметры обработки:')
-    print(f'Видео: {video_path}')
-    print(f'Аудиодорожка: {track_number}')
+    print(f'Файл: {media_path}')
+
+    if is_video:
+        print(f'Аудиодорожка: {track_number}')
+    else:
+        print('Тип: аудиофайл')
+
     print(f'Модель: {model_name}')
     print()
 
-    with tempfile.TemporaryDirectory() as temp_directory:
-        audio_path = Path(temp_directory) / 'audio.wav'
+    if is_video:
+        with tempfile.TemporaryDirectory() as temp_directory:
+            audio_path = Path(temp_directory) / 'audio.wav'
 
-        print('1/3 Извлечение аудиодорожки...')
+            print('1/3 Извлечение аудиодорожки...')
 
-        audio_start = time.perf_counter()
+            audio_start = time.perf_counter()
 
-        extract_audio_track(
-            video_path=video_path,
-            output_path=audio_path,
-            track_number=track_number,
-        )
+            extract_audio_track(
+                video_path=media_path,
+                output_path=audio_path,
+                track_number=track_number,
+            )
 
-        audio_elapsed = time.perf_counter() - audio_start
+            audio_elapsed = time.perf_counter() - audio_start
 
-        print(
-            f'    Готово за '
-            f'{format_duration(audio_elapsed)}'
-        )
+            print(
+                f'    Готово за '
+                f'{format_duration(audio_elapsed)}'
+            )
 
-        print()
-        print('2/3 Транскрибация...')
+            print()
+            print('2/3 Транскрибация...')
+
+            transcription_start = time.perf_counter()
+
+            segments = transcribe_audio(
+                audio_path=audio_path,
+                model_name=model_name,
+            )
+
+            transcription_elapsed = (
+                time.perf_counter() - transcription_start
+            )
+
+            print(
+                f'    Готово за '
+                f'{format_duration(transcription_elapsed)}'
+            )
+
+            print()
+            print('3/3 Сохранение результатов...')
+
+            export_start = time.perf_counter()
+
+            save_results(
+                segments=segments,
+                txt_path=txt_path,
+                md_path=md_path,
+                title=media_path.stem,
+            )
+
+            export_elapsed = time.perf_counter() - export_start
+
+            print(
+                f'    Готово за '
+                f'{format_duration(export_elapsed)}'
+            )
+
+    else:
+        print('1/2 Транскрибация...')
 
         transcription_start = time.perf_counter()
 
         segments = transcribe_audio(
-            audio_path=audio_path,
+            audio_path=media_path,
             model_name=model_name,
         )
 
@@ -267,19 +351,15 @@ def process_video(
         )
 
         print()
-        print('3/3 Сохранение результатов...')
+        print('2/2 Сохранение результатов...')
 
         export_start = time.perf_counter()
 
-        export_txt(
+        save_results(
             segments=segments,
-            output_path=txt_path,
-        )
-
-        export_markdown(
-            segments=segments,
-            output_path=md_path,
-            title=video_path.stem,
+            txt_path=txt_path,
+            md_path=md_path,
+            title=media_path.stem,
         )
 
         export_elapsed = time.perf_counter() - export_start
@@ -303,46 +383,77 @@ def main() -> None:
     args = parse_arguments()
 
     while True:
-        if args.video is None:
-            video_path = choose_video_file()
+        if args.media is None:
+            media_path = choose_media_file()
 
-            if video_path is None:
+            if media_path is None:
                 print()
                 print('Программа завершена.')
                 return
         else:
-            video_path = args.video.resolve()
+            media_path = args.media.resolve()
 
-            if not video_path.exists():
+            if not media_path.exists():
                 raise FileNotFoundError(
-                    f'Видео не найдено: {video_path}'
+                    f'Файл не найден: {media_path}'
                 )
 
-        while True:
-            track_number = choose_audio_track()
+        extension = media_path.suffix.lower()
 
-            if track_number is None:
-                if args.video is None:
-                    break
+        if extension not in MEDIA_EXTENSIONS:
+            raise ValueError(
+                f'Неподдерживаемый формат файла: {extension}'
+            )
+
+        if extension in VIDEO_EXTENSIONS:
+            while True:
+                track_number = choose_audio_track()
+
+                if track_number is None:
+                    if args.media is None:
+                        break
+
+                    print()
+                    print('Программа завершена.')
+                    return
+
+                while True:
+                    model_name = choose_model(
+                        'выбору аудиодорожки'
+                    )
+
+                    if model_name is None:
+                        break
+
+                    process_media(
+                        media_path=media_path,
+                        track_number=track_number,
+                        model_name=model_name,
+                        output_directory=args.output.resolve(),
+                    )
+
+                    return
+
+        else:
+            model_name = choose_model(
+                'выбору файла'
+            )
+
+            if model_name is None:
+                if args.media is None:
+                    continue
 
                 print()
                 print('Программа завершена.')
                 return
 
-            while True:
-                model_name = choose_model()
+            process_media(
+                media_path=media_path,
+                model_name=model_name,
+                output_directory=args.output.resolve(),
+            )
 
-                if model_name is None:
-                    break
-
-                process_video(
-                    video_path=video_path,
-                    track_number=track_number,
-                    model_name=model_name,
-                    output_directory=args.output.resolve(),
-                )
-
-                return
+            return
 
 
 if __name__ == '__main__':

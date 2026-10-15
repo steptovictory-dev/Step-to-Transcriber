@@ -1,3 +1,5 @@
+from pathlib import Path
+
 """Warm stone and copper desktop theme."""
 
 STYLE = '''
@@ -10,11 +12,13 @@ QLabel { background: transparent; }
 QLabel#brand { color: #df9b66; font-family: "Georgia"; font-style: italic; font-weight: bold; font-size: 31px; }
 QLabel#eyebrow { color: #d39362; font-size: 11px; font-weight: 600; letter-spacing: 3px; }
 QLabel#heading { color: #f1e9dc; font-family: "Georgia"; font-style: italic; font-size: 34px; }
+QLabel#liveEmptyTitle { color: #f1e9dc; font-family: "Georgia"; font-style: italic; font-size: 28px; }
 QLabel#muted { color: #b0a59b; }
 QLabel#small { color: #b0a59b; font-size: 12px; }
 QLabel#cardTitle { font-size: 22px; font-weight: 600; }
 QLabel#cardIndex { color: #d39362; font-size: 12px; letter-spacing: 2px; }
 QLabel#badge { background: #332c25; color: #dfaa7e; border: 1px solid #574131; border-radius: 12px; padding: 5px 12px; font-size: 11px; }
+QLabel#liveBadge { background: #29362a; color: #b0d49e; border: 1px solid #628755; border-radius: 12px; padding: 5px 12px; font-size: 11px; }
 QLabel#step { color: #8d8379; font-size: 12px; }
 QLabel#step[active="true"] { color: #e6ac7e; }
 QFrame#panel { background: #2b2926; border: 1px solid #484039; border-radius: 14px; }
@@ -31,6 +35,10 @@ QPushButton#quiet:hover { color: #e9ad7a; background: #332c26; }
 QPushButton#exit { background: #654039; border: 1px solid #a16b59; color: #f3d5c8; }
 QPushButton#exit:hover { background: #7c493e; border-color: #cb8b70; }
 QPushButton#exit:pressed { background: #55332e; }
+QCheckBox { spacing: 9px; background: transparent; }
+QCheckBox::indicator { width: 17px; height: 17px; border: 1px solid #8e7058; border-radius: 4px; background: #24221f; }
+QCheckBox::indicator:checked { image: url(__CHECKMARK__); background: #cf8851; border: 2px solid #efbf98; }
+QCheckBox::indicator:disabled { border-color: #574a40; }
 QPushButton#sourceCard { text-align: left; background: #2b2926; border: 1px solid #514337; border-radius: 16px; }
 QPushButton#sourceCard:hover { background: #342c25; border: 1px solid #d39362; }
 QPushButton#sourceCard:focus { border: 2px solid #d39362; }
@@ -48,3 +56,7 @@ QScrollBar::handle:vertical { background: #6b5745; border-radius: 4px; min-heigh
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 QToolTip { background: #342c25; color: #eee7dd; border: 1px solid #8e6443; padding: 6px; }
 '''
+
+STYLE = STYLE.replace('__CHECKMARK__', (Path(__file__).resolve().parents[1] / 'assets' / 'checkmark.svg').as_posix())
+
+STYLE += 'QPushButton:checked { background: #63462f; border: 1px solid #d39362; color: #f4dfcb; }'

@@ -9,19 +9,20 @@ from pathlib import Path
 from uuid import uuid4
 
 from src.audio import extract_audio_track, get_audio_track_count
-from src.exporters import export_markdown, export_txt, group_segments
+from src.exporters import export_markdown, export_txt, format_timestamp, group_segments
 from src.transcriber import transcribe_audio
-from src.youtube import download_audio
+from src.youtube import download_audio, video_service
 
 
 @dataclass
 class Job:
     source: str
     output: Path
-    youtube: bool = False
+    youtube: bool = False  # Legacy field name: True selects any supported video URL
     track: int = 1
     model: str = 'turbo'
     formats: tuple[str, ...] = ('md',)
+    timestamps: bool = True
 
 
 @dataclass
@@ -43,7 +44,7 @@ def run_job(job: Job, status, progress, cancelled) -> Result:
         check()
         directory = Path(temporary)
         if job.youtube:
-            status('Загрузка аудио с YouTube')
+            status(f'Загрузка записи: {video_service(job.source)}')
             media, title = download_audio(job.source, directory, status, progress, cancelled)
             track = 1
         else:
@@ -73,11 +74,11 @@ def run_job(job: Job, status, progress, cancelled) -> Result:
         staged = []
         if txt:
             staged_txt = directory / 'transcript.txt'
-            export_txt(segments, staged_txt)
+            export_txt(segments, staged_txt, timestamps=job.timestamps)
             staged.append((staged_txt, txt))
         if markdown:
             staged_md = directory / 'transcript.md'
-            export_markdown(segments, staged_md, title=title)
+            export_markdown(segments, staged_md, title=title, timestamps=job.timestamps)
             if job.youtube:
                 with staged_md.open('a', encoding='utf-8') as stream:
                     stream.write(f'\nИсточник: {job.source}\n')
@@ -91,5 +92,7 @@ def run_job(job: Job, status, progress, cancelled) -> Result:
                 destination.unlink(missing_ok=True)
             raise
         progress(1.0)
-        text = '\n\n'.join(segment.text for segment in group_segments(segments))
+        text = '\n\n'.join(
+            (f'[{format_timestamp(segment.start)}] ' if job.timestamps else '') + segment.text
+            for segment in group_segments(segments))
         return Result(txt, markdown, title, text)

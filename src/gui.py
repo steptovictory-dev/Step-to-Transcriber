@@ -2,9 +2,9 @@ import logging
 from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
     QProgressBar, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
 )
@@ -13,7 +13,7 @@ from src.audio import get_audio_track_count
 from src.pipeline import Job, run_job
 from src.theme import STYLE
 from src.widgets import SourceCard, Waveform, line_icon
-from src.youtube import normalize_youtube_url
+from src.youtube import normalize_video_url
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -65,13 +65,15 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.worker = None
+        self.live_window = None
         self.result = None
         self.is_youtube = False
         self.close_when_finished = False
         self.outcome = None
         self.setWindowTitle('Step to Transcriber')
-        self.resize(1040, 800)
-        self.setMinimumSize(860, 720)
+        self.setWindowIcon(QIcon(str(ROOT / 'project' / 'assets' / 'step-to-transcriber.ico')))
+        self.resize(1240, 760)
+        self.setMinimumSize(1060, 680)
         self.setAcceptDrops(True)
         self.setStyleSheet(STYLE)
         shell = QWidget()
@@ -91,7 +93,8 @@ class MainWindow(QMainWindow):
         row.addWidget(label('LOCAL AUDIO STUDIO', 'eyebrow'))
         outer.addWidget(header)
 
-        route = QHBoxLayout()
+        self.route = QWidget()
+        route = QHBoxLayout(self.route)
         route.setSpacing(12)
         route.setContentsMargins(40, 19, 40, 10)
         self.steps = []
@@ -102,7 +105,7 @@ class MainWindow(QMainWindow):
             if index < 3:
                 route.addWidget(label('/', 'small'))
         route.addStretch()
-        outer.addLayout(route)
+        outer.addWidget(self.route)
 
         self.pages = QStackedWidget()
         self.pages.addWidget(self.build_home())
@@ -140,17 +143,21 @@ class MainWindow(QMainWindow):
     def build_home(self):
         page, layout = self.page()
         layout.addStretch(1)
-        layout.addWidget(label('АУДИО / ВИДЕО / YOUTUBE', 'eyebrow'))
+        layout.addWidget(label('АУДИО / ВИДЕО / ЭФИР', 'eyebrow'))
         layout.addWidget(label('Превращаем звук в слова', 'heading'))
-        layout.addWidget(label('Выберите файл или добавьте ссылку YouTube', 'muted'))
+        layout.addWidget(label('Выберите файл, ссылку на видео или звук прямого эфира', 'muted'))
         cards = QHBoxLayout()
-        cards.setSpacing(20)
+        cards.setSpacing(16)
         self.file_card = SourceCard('01', 'Файл на компьютере', 'Выберите аудио или видео\nили перетащите файл в окно', 'file')
-        self.url_card = SourceCard('02', 'Ссылка YouTube', 'Вставьте ссылку на ролик\nи получите расшифровку', 'link')
+        self.url_card = SourceCard('02', 'Ссылка на видео', 'YouTube, VK Видео, Rutube\nTwitch, VK Видео Live: записи эфиров', 'link')
+        self.live_card = SourceCard('03', 'Прямой эфир', 'Вебинары и стримы\nЗвук компьютера без ссылки', 'live')
+        self.live_card.setToolTip('Расшифровка звука компьютера в этом окне')
         self.file_card.clicked.connect(lambda: self.select_source(False))
         self.url_card.clicked.connect(lambda: self.select_source(True))
+        self.live_card.clicked.connect(self.open_live)
         cards.addWidget(self.file_card, 1)
         cards.addWidget(self.url_card, 1)
+        cards.addWidget(self.live_card, 1)
         layout.addLayout(cards)
         layout.addWidget(label('Обработка на вашем компьютере / язык определяется автоматически', 'small'))
         layout.addStretch(2)
@@ -205,6 +212,10 @@ class MainWindow(QMainWindow):
         self.advanced = QWidget()
         advanced_form = QFormLayout(self.advanced)
         advanced_form.setContentsMargins(0, 0, 0, 0)
+        self.timestamps = QCheckBox('Включить таймкоды')
+        self.timestamps.setChecked(True)
+        self.timestamps.setToolTip('Таймкоды абзацев в результате, копируемом тексте и файлах MD / TXT')
+        advanced_form.addRow('Таймкоды', self.timestamps)
         self.model = QComboBox()
         self.model.addItem('turbo (рекомендуется)', 'turbo')
         self.model.addItem('large-v3 (экспериментальный режим)', 'large-v3')
@@ -327,6 +338,7 @@ class MainWindow(QMainWindow):
     def navigate(self, index, animate=True):
         self.fade.stop()
         self.pages.setCurrentIndex(index)
+        self.route.setVisible(index < 4)
         for number, step in enumerate(self.steps):
             step.setProperty('active', number == index)
             step.style().unpolish(step)
@@ -339,32 +351,33 @@ class MainWindow(QMainWindow):
             self.fade_effect.setOpacity(1.0)
 
     def select_source(self, youtube):
-        if self.worker:
+        if self.worker or (self.live_window and self.live_window.worker):
             return
         self.is_youtube = youtube
         self.source.clear()
-        self.source.setPlaceholderText('https://www.youtube.com/watch?v=...' if youtube else 'Путь к аудио или видео')
+        self.source.setPlaceholderText('Полная ссылка на видео или запись эфира' if youtube else 'Путь к аудио или видео')
         self.browse.setVisible(not youtube)
         self.track.setVisible(not youtube)
         self.track_label.setVisible(not youtube)
         self.track.clear()
         self.track.addItem('Дорожка 1 (автоматически)', 1)
         self.track.setEnabled(False)
-        self.source_badge.setText('YOUTUBE' if youtube else 'ЛОКАЛЬНЫЙ ФАЙЛ')
+        self.source_badge.setText('ВИДЕО ПО ССЫЛКЕ' if youtube else 'ЛОКАЛЬНЫЙ ФАЙЛ')
         self.input_label.setText('ССЫЛКА НА РОЛИК' if youtube else 'ИСХОДНЫЙ ФАЙЛ')
-        self.setup_hint.setText('Добавьте ссылку на видео YouTube, аудио загрузится автоматически' if youtube else 'Дорожка и язык выбраны автоматически, формат результата можно изменить')
-        self.notice.setText('Обычные ролики и Shorts, без прямых эфиров' if youtube else 'Выберите файл или перетащите его в окно')
+        self.setup_hint.setText('Видео и завершённые эфиры: запись загрузится автоматически' if youtube else 'Дорожка и язык выбраны автоматически, формат результата можно изменить')
+        self.notice.setText('Ссылка на один доступный ролик, без прямых эфиров' if youtube else 'Выберите файл или перетащите его в окно')
         self.navigate(1)
         self.source.setFocus()
 
     def go_home(self):
-        if self.worker:
+        if self.worker or (self.live_window and self.live_window.worker):
             return
         self.result = None
         self.source.clear()
         self.preview.clear()
         self.format.setCurrentIndex(0)
         self.model.setCurrentIndex(0)
+        self.timestamps.setChecked(True)
         self.output.setText(str(ROOT / 'output'))
         self.advanced.hide()
         self.more.setText('Дополнительные настройки  +')
@@ -413,10 +426,13 @@ class MainWindow(QMainWindow):
     def start_job(self):
         if self.worker is not None:
             return
+        if self.live_window and self.live_window.worker:
+            QMessageBox.warning(self, 'Идёт прямой эфир', 'Сначала остановите живую расшифровку')
+            return
         try:
             source = self.source.text().strip().strip('"')
             if self.is_youtube:
-                source = normalize_youtube_url(source)
+                source = normalize_video_url(source)
             else:
                 self.inspect_source()
                 if not self.track.count() or not Path(source).is_file():
@@ -424,7 +440,8 @@ class MainWindow(QMainWindow):
             if not self.output.text().strip():
                 raise ValueError('Выберите папку результатов')
             job = Job(source, Path(self.output.text().strip()), self.is_youtube,
-                      self.track.currentData() or 1, self.model.currentData(), self.format.currentData())
+                      self.track.currentData() or 1, self.model.currentData(), self.format.currentData(),
+                      timestamps=self.timestamps.isChecked())
             self.result = None
             self.outcome = None
             self.preview.clear()
@@ -454,7 +471,7 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def set_status(self, message):
         self.details.appendPlainText(message)
-        if message.startswith('YouTube:'):
+        if message.startswith(('YouTube:', 'VK Видео:', 'Rutube:', 'Twitch:', 'VK Видео Live:')):
             return
         self.status.setText(message)
         stage = 3 if 'Сохранение' in message else 2 if 'модели' in message else 1 if 'аудиодорожки' in message else 0
@@ -492,7 +509,7 @@ class MainWindow(QMainWindow):
         self.outcome = 'failed'
         self.wave.stop()
         self.processing_title.setText('Не удалось завершить расшифровку')
-        self.status.setText(message)
+        self.status.setText(message.split('\n\n', 1)[0])
         self.details.appendPlainText(message)
         self.percent.setText('Проверьте источник и попробуйте ещё раз')
         self.progress.setRange(0, 100)
@@ -541,11 +558,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'Открытие файла', f'Не удалось открыть: {path}')
 
     def dragEnterEvent(self, event):
-        if self.worker is None and (event.mimeData().hasUrls() or event.mimeData().hasText()):
+        if self.worker is None and not (self.live_window and self.live_window.worker) and (event.mimeData().hasUrls() or event.mimeData().hasText()):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
-        if self.worker is not None:
+        if self.worker is not None or (self.live_window and self.live_window.worker):
             return
         urls = event.mimeData().urls()
         local = bool(urls and urls[0].isLocalFile())
@@ -556,9 +573,36 @@ class MainWindow(QMainWindow):
         event.acceptProposedAction()
 
     def closeEvent(self, event):
+        if self.live_window and self.live_window.worker:
+            self.close_when_finished = True
+            self.live_window.stop_session()
+            if self.worker:
+                self.cancel_job()
+            event.ignore()
+            return
         if self.worker is not None:
             self.close_when_finished = True
             self.cancel_job()
             event.ignore()
         else:
             event.accept()
+
+    def open_live(self):
+        if self.worker:
+            return
+        if self.live_window is None:
+            from src.live_gui import LivePage
+            self.live_window = LivePage(self)
+            self.live_window.session_finished.connect(self.live_finished)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setStyleSheet('QScrollArea, QScrollArea > QWidget > QWidget { background: #22211f; }')
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(self.live_window)
+            self.pages.addWidget(scroll)
+        self.navigate(4)
+
+    def live_finished(self):
+        if self.close_when_finished:
+            self.close()
+

@@ -70,6 +70,8 @@ class GuiTests(unittest.TestCase):
 
     def test_markdown_default_result_can_be_copied_and_reset(self):
         self.assertEqual(self.window.format.currentData(), ('md',))
+        self.assertTrue(self.window.timestamps.isChecked())
+        self.window.timestamps.setChecked(False)
         result = Result(None, Path('result.md'), 'Test', 'Только Markdown')
         self.window.completed(result)
         self.window.copy_text()
@@ -81,6 +83,19 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.window.pages.currentIndex(), 0)
         self.assertEqual(self.window.format.currentData(), ('md',))
         self.assertEqual(self.window.preview.toPlainText(), '')
+        self.assertTrue(self.window.timestamps.isChecked())
+
+    def test_timestamp_choice_is_passed_to_worker_for_both_sources(self):
+        for remote in (False, True):
+            for enabled in (False, True):
+                with self.subTest(remote=remote, enabled=enabled):
+                    self.window.select_source(remote)
+                    self.window.source.setText('https://youtu.be/BaW_jenozKc' if remote else __file__)
+                    self.window.timestamps.setChecked(enabled)
+                    with patch.object(self.window, 'inspect_source'), patch('src.gui.Worker') as worker:
+                        self.window.start_job()
+                        self.assertEqual(worker.call_args.args[0].timestamps, enabled)
+                    self.window.worker = None
 
     def test_source_cards_route_to_correct_setup(self):
         self.window.go_home()

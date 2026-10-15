@@ -69,6 +69,7 @@ def group_segments(
 def export_txt(
     segments: list[TranscriptSegment],
     output_path: Path,
+    timestamps: bool = False,
 ) -> Path:
     output_path.parent.mkdir(
         parents=True,
@@ -82,7 +83,8 @@ def export_txt(
         encoding='utf-8',
     ) as file:
         for segment in grouped_segments:
-            file.write(f'{segment.text}\n\n')
+            prefix = f'[{format_timestamp(segment.start)}] ' if timestamps else ''
+            file.write(f'{prefix}{segment.text}\n\n')
 
     return output_path
 
@@ -91,6 +93,7 @@ def export_markdown(
     segments: list[TranscriptSegment],
     output_path: Path,
     title: str = 'Транскрипция лекции',
+    timestamps: bool = True,
 ) -> Path:
     output_path.parent.mkdir(
         parents=True,
@@ -106,10 +109,7 @@ def export_markdown(
         file.write(f'# {title}\n\n')
 
         for segment in grouped_segments:
-            timestamp = format_timestamp(segment.start)
-
-            file.write(
-                f'**[{timestamp}]** {segment.text}\n\n'
-            )
+            prefix = f'**[{format_timestamp(segment.start)}]** ' if timestamps else ''
+            file.write(f'{prefix}{segment.text}\n\n')
 
     return output_path

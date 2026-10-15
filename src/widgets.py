@@ -3,8 +3,8 @@
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 
 def line_icon(kind, size=48):
@@ -27,6 +27,48 @@ def line_icon(kind, size=48):
         painter.drawRoundedRect(QRectF(15, 14, 23, 29), 3, 3)
         painter.drawLine(QPointF(29, 8), QPointF(9, 8))
         painter.drawLine(QPointF(9, 8), QPointF(9, 33))
+    elif kind == 'live':
+        painter.setBrush(QColor('#d99b6b'))
+        painter.drawEllipse(QPointF(24, 24), 4, 4)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for radius in (11, 19):
+            rect = QRectF(24 - radius, 24 - radius, radius * 2, radius * 2)
+            painter.drawArc(rect, -55 * 16, 110 * 16)
+            painter.drawArc(rect, 125 * 16, 110 * 16)
+    elif kind in ('vk-video', 'vk-live'):
+        painter.drawRoundedRect(QRectF(5, 6, 38, 36), 9, 9)
+        mark = QPainterPath(QPointF(11, 17))
+        mark.cubicTo(12, 25, 15, 31, 20, 31)
+        mark.lineTo(20, 17)
+        mark.moveTo(27, 17)
+        mark.lineTo(27, 31)
+        mark.moveTo(35, 17)
+        mark.lineTo(27, 24)
+        mark.lineTo(36, 31)
+        painter.drawPath(mark)
+        if kind == 'vk-live':
+            painter.setBrush(QColor('#d99b6b'))
+            painter.drawEllipse(QPointF(39, 9), 3, 3)
+    elif kind == 'twitch':
+        mark = QPainterPath(QPointF(9, 7))
+        for x, y in ((39, 7), (39, 29), (29, 38), (22, 38), (16, 43), (16, 38), (9, 38), (9, 7)):
+            mark.lineTo(x, y)
+        painter.drawPath(mark)
+        painter.drawLine(QPointF(22, 16), QPointF(22, 27))
+        painter.drawLine(QPointF(30, 16), QPointF(30, 27))
+    elif kind == 'rutube':
+        painter.drawRoundedRect(QRectF(5, 6, 38, 36), 9, 9)
+        mark = QPainterPath(QPointF(16, 32))
+        mark.lineTo(16, 17)
+        mark.lineTo(25, 17)
+        mark.cubicTo(33, 17, 33, 25, 25, 25)
+        mark.lineTo(16, 25)
+        mark.moveTo(25, 25)
+        mark.lineTo(32, 32)
+        painter.drawPath(mark)
+        painter.setBrush(QColor('#d99b6b'))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(35, 13), 2, 2)
     painter.end()
     return QIcon(pixmap)
 
@@ -35,24 +77,38 @@ class SourceCard(QPushButton):
     def __init__(self, index, title, description, kind, parent=None):
         super().__init__(parent)
         self.setObjectName('sourceCard')
-        self.setMinimumHeight(225)
+        self.setMinimumHeight(280)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAccessibleName(title)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(27, 24, 27, 24)
-        icon = QLabel()
-        icon.setPixmap(line_icon(kind, 48).pixmap(48, 48))
+        layout.setContentsMargins(20, 24, 20, 24)
+        icons = QHBoxLayout()
+        icons.setSpacing(6)
+        services = (('link', 'YouTube'), ('vk-video', 'VK Видео'), ('rutube', 'Rutube'),
+                    ('twitch', 'Twitch: записи'), ('vk-live', 'VK Видео Live: записи')) if kind == 'link' else ((kind, title),)
+        for icon_kind, service in services:
+            icon = QLabel()
+            icon.setFixedSize(32, 32)
+            icon.setPixmap(line_icon(icon_kind, 32).pixmap(32, 32))
+            icon.setAccessibleName(service)
+            icon.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            icons.addWidget(icon)
+        icons.addStretch()
         label = QLabel(title)
         label.setObjectName('cardTitle')
         label.setWordWrap(True)
+        label.setMinimumHeight(60)
+        label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         detail = QLabel(description)
         detail.setObjectName('muted')
         detail.setWordWrap(True)
+        detail.setMinimumHeight(72)
+        detail.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         number = QLabel(f'{index}  /  ВЫБРАТЬ ИСТОЧНИК')
         number.setObjectName('cardIndex')
-        for widget in (icon, number, label, detail):
+        for widget in (number, label, detail):
             widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        layout.addWidget(icon)
+        layout.addLayout(icons)
         layout.addStretch()
         layout.addWidget(number)
         layout.addWidget(label)

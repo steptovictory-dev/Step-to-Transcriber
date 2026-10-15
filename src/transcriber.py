@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from src.runtime import configure_gpu_runtime
 
@@ -21,6 +22,8 @@ def transcribe_audio(
     model_name: str = 'turbo',
     language: str | None = None,
     compute_type: str = 'float16',
+    progress: Callable[[float], None] | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> list[TranscriptSegment]:
     if not audio_path.exists():
         raise FileNotFoundError(f'Файл не найден: {audio_path}')
@@ -31,7 +34,7 @@ def transcribe_audio(
         compute_type=compute_type,
     )
 
-    segments, _ = model.transcribe(
+    segments, info = model.transcribe(
         str(audio_path),
         language=language,
         beam_size=5,
@@ -40,6 +43,8 @@ def transcribe_audio(
     result = []
 
     for segment in segments:
+        if cancelled and cancelled():
+            raise InterruptedError('Обработка отменена')
         result.append(
             TranscriptSegment(
                 start=segment.start,
@@ -47,5 +52,7 @@ def transcribe_audio(
                 text=segment.text.strip(),
             )
         )
+        if progress and info.duration:
+            progress(min(segment.end / info.duration, 1.0))
 
     return result

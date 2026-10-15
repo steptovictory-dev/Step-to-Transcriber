@@ -9,7 +9,16 @@ __pycache__/
 .vscode/
 
 # Generated files
+input/
 output/
+*.log
+
+# Local project checkpoints
+00_Checkpoint/
+Checkpoint/
+checkpoints/
+CP-*.md
+CP-*.pdf
 
 # Media files
 *.mp4
@@ -33,3 +42,6 @@ output/
 build/
 dist/
 *.spec
+
+# Local JavaScript runtime for YouTube
+tools/

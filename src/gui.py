@@ -5,14 +5,15 @@ from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QSettings, QThread,
 from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect,
-    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
-    QProgressBar, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
+    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
+    QProgressBar, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from src.audio import get_audio_track_count
 from src.pipeline import Job, run_job
+from src.sharing import ShareFileButton
 from src.theme import STYLE
-from src.widgets import SourceCard, Waveform, line_icon
+from src.widgets import AlignedRow, SourceCard, Waveform, line_icon
 from src.youtube import normalize_video_url
 
 
@@ -75,8 +76,8 @@ class MainWindow(QMainWindow):
         self.outcome = None
         self.setWindowTitle('Step to Transcriber')
         self.setWindowIcon(QIcon(str(ROOT / 'project' / 'assets' / 'step-to-transcriber.ico')))
+        self.setMinimumSize(1060, 760)
         self.resize(1240, 760)
-        self.setMinimumSize(1060, 680)
         self.fullscreen_shortcut = QShortcut(QKeySequence('F11'), self)
         self.fullscreen_shortcut.setAutoRepeat(False)
         self.fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
@@ -179,6 +180,8 @@ class MainWindow(QMainWindow):
 
     def build_setup(self):
         page, layout = self.page()
+        layout.setContentsMargins(40, 12, 40, 12)
+        layout.setSpacing(10)
         top = QHBoxLayout()
         back = button('‹  Выбор источника', self.go_home)
         back.setObjectName('quiet')
@@ -192,9 +195,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.setup_hint)
         self.settings = QFrame()
         self.settings.setObjectName('panel')
+        self.settings.setStyleSheet('QLineEdit { padding: 7px 11px; } '
+                                   'QComboBox { padding: 7px 24px 7px 11px; } '
+                                   'QPushButton { padding: 7px 19px; }')
         panel = QVBoxLayout(self.settings)
-        panel.setContentsMargins(24, 22, 24, 22)
-        panel.setSpacing(17)
+        panel.setContentsMargins(24, 12, 24, 12)
+        panel.setSpacing(9)
         self.input_label = label('ИСХОДНЫЙ ФАЙЛ', 'eyebrow')
         panel.addWidget(self.input_label)
         source_row = QHBoxLayout()
@@ -208,7 +214,7 @@ class MainWindow(QMainWindow):
         self.notice.setWordWrap(True)
         panel.addWidget(self.notice)
         form = QFormLayout()
-        form.setVerticalSpacing(14)
+        form.setVerticalSpacing(8)
         self.format = QComboBox()
         self.format.addItem('Markdown (.md)', ('md',))
         self.format.addItem('Обычный текст (.txt)', ('txt',))
@@ -224,22 +230,27 @@ class MainWindow(QMainWindow):
         self.more.setObjectName('quiet')
         panel.addWidget(self.more, alignment=Qt.AlignmentFlag.AlignLeft)
         self.advanced = QWidget()
-        advanced_form = QFormLayout(self.advanced)
+        advanced_form = QGridLayout(self.advanced)
         advanced_form.setContentsMargins(0, 0, 0, 0)
+        advanced_form.setHorizontalSpacing(14)
+        advanced_form.setVerticalSpacing(8)
         self.timestamps = QCheckBox('Включить таймкоды')
         self.timestamps.setChecked(True)
         self.timestamps.setToolTip('Таймкоды абзацев в результате, копируемом тексте и файлах MD / TXT')
-        advanced_form.addRow('Таймкоды', self.timestamps)
+        advanced_form.addWidget(self.timestamps, 0, 0)
         self.model = QComboBox()
         self.model.addItem('turbo (рекомендуется)', 'turbo')
         self.model.addItem('large-v3 (экспериментальный режим)', 'large-v3')
-        advanced_form.addRow('Модель', self.model)
+        advanced_form.addWidget(label('Модель'), 0, 1)
+        advanced_form.addWidget(self.model, 0, 2)
+        advanced_form.setColumnStretch(2, 1)
         out_row = QHBoxLayout()
         self.output = QLineEdit(self.output_directory())
         self.output.textChanged.connect(self.remember_output_directory)
         out_row.addWidget(self.output, 1)
         out_row.addWidget(button('Изменить', self.choose_output))
-        advanced_form.addRow('Папка результатов', out_row)
+        advanced_form.addWidget(label('Папка результатов'), 1, 0)
+        advanced_form.addLayout(out_row, 1, 1, 1, 2)
         panel.addWidget(self.advanced)
         self.advanced.hide()
         layout.addWidget(self.settings)
@@ -250,12 +261,7 @@ class MainWindow(QMainWindow):
         self.start = button('Расшифровать  →', self.start_job, primary=True)
         bottom.addWidget(self.start)
         layout.addLayout(bottom)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setStyleSheet('QScrollArea, QScrollArea > QWidget > QWidget { background: #22211f; }')
-        scroll.setWidget(page)
-        return scroll
+        return page
 
     def build_processing(self):
         page, layout = self.page()
@@ -311,43 +317,31 @@ class MainWindow(QMainWindow):
     def build_result(self):
         page, layout = self.page()
         layout.addWidget(label('ГОТОВО', 'eyebrow'))
-        layout.addWidget(label('Расшифровка закончена', 'heading'))
-        self.result_title = label('', 'muted')
-        self.result_title.setWordWrap(True)
-        layout.addWidget(self.result_title)
-        toolbar = QHBoxLayout()
-        self.saved_formats = label('', 'small')
-        toolbar.addWidget(self.saved_formats)
-        toolbar.addStretch()
+        self.result_heading = label('Расшифровка закончена', 'heading')
+        self.share = ShareFileButton(self.share_result_file)
+        self.share.setEnabled(False)
         self.copy = button('Копировать текст', self.copy_text)
         self.copy.setIcon(line_icon('copy', 20))
         self.copy.setEnabled(False)
         self.copy_reset = QTimer(self)
         self.copy_reset.setSingleShot(True)
         self.copy_reset.timeout.connect(lambda: self.copy.setText('Копировать текст'))
-        toolbar.addWidget(self.copy)
-        layout.addLayout(toolbar)
+        layout.addLayout(AlignedRow([self.result_heading], [self.share, self.copy]))
+        self.result_title = label('', 'muted')
+        self.result_title.setWordWrap(True)
+        layout.addWidget(self.result_title)
         self.preview = QPlainTextEdit()
         self.preview.setObjectName('transcript')
         self.preview.setReadOnly(True)
         layout.addWidget(self.preview, 1)
-        files = QHBoxLayout()
         self.open_folder = button('Открыть папку с результатом  ↗', self.open_result_folder)
         self.open_txt = button('Открыть TXT', lambda: self.open_path(self.result.txt))
         self.open_md = button('Открыть Markdown', lambda: self.open_path(self.result.markdown))
-        files.addWidget(self.open_folder)
-        files.addStretch()
-        files.addWidget(self.open_md)
-        files.addWidget(self.open_txt)
-        layout.addLayout(files)
-        bottom = QHBoxLayout()
         self.exit_button = button('Выход из приложения', self.close)
         self.exit_button.setObjectName('exit')
         self.new_button = button('Ещё одна расшифровка  →', self.go_home, primary=True)
-        bottom.addWidget(self.exit_button)
-        bottom.addStretch()
-        bottom.addWidget(self.new_button)
-        layout.addLayout(bottom)
+        layout.addLayout(AlignedRow([self.exit_button, self.open_folder],
+                                    [self.open_md, self.open_txt, self.new_button]))
         return page
 
     def navigate(self, index, animate=True):
@@ -398,7 +392,16 @@ class MainWindow(QMainWindow):
         self.copy_reset.stop()
         self.copy.setText('Копировать текст')
         self.copy.setEnabled(False)
+        self.share.setEnabled(False)
         self.navigate(0)
+
+    def share_result_file(self):
+        if self.result is None:
+            raise ValueError('Сначала завершите расшифровку')
+        path = self.result.markdown or self.result.txt
+        if path is None:
+            raise ValueError('Файл результата недоступен')
+        return path
 
     def toggle_advanced(self):
         visible = self.advanced.isHidden()
@@ -526,10 +529,10 @@ class MainWindow(QMainWindow):
         self.wave.stop()
         self.preview.setPlainText(result.text)
         self.result_title.setText(result.title)
-        self.saved_formats.setText('Сохранено: ' + ' + '.join(name for name, path in (('Markdown', result.markdown), ('TXT', result.txt)) if path))
         self.open_txt.setVisible(result.txt is not None)
         self.open_md.setVisible(result.markdown is not None)
         self.copy.setEnabled(True)
+        self.share.setEnabled(True)
         self.navigate(3)
 
     @Slot(str)
@@ -624,12 +627,7 @@ class MainWindow(QMainWindow):
             from src.live_gui import LivePage
             self.live_window = LivePage(self)
             self.live_window.session_finished.connect(self.live_finished)
-            scroll = QScrollArea()
-            scroll.setWidgetResizable(True)
-            scroll.setStyleSheet('QScrollArea, QScrollArea > QWidget > QWidget { background: #22211f; }')
-            scroll.setFrameShape(QFrame.Shape.NoFrame)
-            scroll.setWidget(self.live_window)
-            self.pages.addWidget(scroll)
+            self.pages.addWidget(self.live_window)
         self.navigate(4)
 
     def live_finished(self):

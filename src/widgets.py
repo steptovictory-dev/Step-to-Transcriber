@@ -2,9 +2,79 @@
 
 import math
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer
+from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QLayout, QPushButton, QVBoxLayout, QWidget
+
+
+class AlignedRow(QLayout):
+    """Keep two groups against opposite edges, wrapping when space is limited."""
+
+    def __init__(self, left, right):
+        super().__init__()
+        self.items = []
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setSpacing(12)
+        for widgets in (left, right):
+            group = QWidget()
+            layout = QHBoxLayout(group)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(12)
+            for widget in widgets:
+                layout.addWidget(widget)
+            self.addWidget(group)
+
+    def addItem(self, item):
+        self.items.append(item)
+
+    def count(self):
+        return len(self.items)
+
+    def itemAt(self, index):
+        return self.items[index] if 0 <= index < len(self.items) else None
+
+    def takeAt(self, index):
+        return self.items.pop(index) if 0 <= index < len(self.items) else None
+
+    def sizeHint(self):
+        sizes = [item.sizeHint() for item in self.items]
+        return QSize(sum(size.width() for size in sizes) + self.spacing(),
+                     max((size.height() for size in sizes), default=0))
+
+    def minimumSize(self):
+        sizes = [item.minimumSize() for item in self.items]
+        return QSize(max((size.width() for size in sizes), default=0),
+                     max((size.height() for size in sizes), default=0))
+
+    def expandingDirections(self):
+        return Qt.Orientation.Horizontal
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        sizes = [item.sizeHint() for item in self.items]
+        if width < self.sizeHint().width():
+            return sum(size.height() for size in sizes) + self.spacing()
+        return self.sizeHint().height()
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        if len(self.items) != 2:
+            return
+        left, right = [item.sizeHint() for item in self.items]
+        if rect.width() < self.sizeHint().width():
+            self.items[0].setGeometry(QRect(rect.x(), rect.y(), left.width(), left.height()))
+            self.items[1].setGeometry(QRect(rect.right() - right.width() + 1,
+                                           rect.y() + left.height() + self.spacing(),
+                                           right.width(), right.height()))
+        else:
+            height = max(left.height(), right.height())
+            self.items[0].setGeometry(QRect(rect.x(), rect.y() + (height - left.height()) // 2,
+                                           left.width(), left.height()))
+            self.items[1].setGeometry(QRect(rect.right() - right.width() + 1,
+                                           rect.y() + (height - right.height()) // 2,
+                                           right.width(), right.height()))
 
 
 def line_icon(kind, size=48):

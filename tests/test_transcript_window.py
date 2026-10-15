@@ -135,6 +135,26 @@ class TranscriptWindowTests(unittest.TestCase):
         detached.timestamps.click()
         self.assertFalse(self.live.timestamps.isChecked())
 
+    def test_sharing_live_creates_fixed_snapshot_even_without_autosave(self):
+        self.live.no_save.click()
+        self.live.detach.click()
+        detached = self.live.transcript_window
+        self.assertFalse(self.live.share.isEnabled())
+        self.assertFalse(detached.share.isEnabled())
+        with patch('src.live_gui.ROOT', Path(self.directory.name)):
+            with self.assertRaises(ValueError):
+                self.live.create_share_file()
+            self.live.add_paragraph(0, 'Первый фрагмент 🎧')
+            self.assertTrue(self.live.share.isEnabled())
+            self.assertTrue(detached.share.isEnabled())
+            first = self.live.create_share_file()
+            self.live.add_paragraph(8, 'Следующий фрагмент')
+            second = detached.share.provider()
+        self.assertNotEqual(first, second)
+        self.assertEqual(first.read_text(encoding='utf-8'), 'Первый фрагмент 🎧\n')
+        self.assertEqual(second.read_text(encoding='utf-8').strip(), self.live.preview.toPlainText())
+        self.assertEqual(self.live.paths, [])
+
     def test_main_close_waits_for_session_and_closes_both_windows(self):
         def fake_live(job, stopped, status, paragraph, meter, saved, selection):
             while not stopped():

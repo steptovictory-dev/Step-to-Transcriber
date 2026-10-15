@@ -1,7 +1,9 @@
 """Embedded live-transcription page using the application's copper theme."""
 
 import logging
+from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from PySide6.QtCore import QEvent, QThread, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QTextCursor
@@ -11,9 +13,11 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPlainTextEdit, QProgressBar, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from src.gui import button, label
+from src.gui import ROOT, button, label
 from src.live import LiveJob, output_devices, run_live, timestamp
+from src.sharing import ShareFileButton
 from src.theme import STYLE
+from src.widgets import AlignedRow
 
 
 class LiveWorker(QThread):
@@ -50,7 +54,7 @@ class TranscriptWindow(QWidget):
         self.setWindowIcon(live.host.windowIcon())
         self.setStyleSheet(STYLE)
         self.resize(900, 620)
-        self.setMinimumSize(760, 360)
+        self.setMinimumSize(880, 360)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(14)
@@ -70,10 +74,15 @@ class TranscriptWindow(QWidget):
         self.timestamps.setChecked(live.timestamps.isChecked())
         self.timestamps.setToolTip(live.timestamps.toolTip())
         self.copy = button('Копировать текст', live.copy_text)
+        self.share = ShareFileButton(live.create_share_file, 'Поделиться')
+        self.share.setEnabled(not live.preview.document().isEmpty())
+        live.preview.textChanged.connect(
+            lambda: self.share.setEnabled(not live.preview.document().isEmpty()))
         actions.addWidget(self.start)
         actions.addWidget(self.stop)
         actions.addStretch()
         actions.addWidget(self.timestamps)
+        actions.addWidget(self.share)
         actions.addWidget(self.copy)
         layout.addLayout(actions)
         live.preview.document().contentsChange.connect(self.sync_text_change)
@@ -140,7 +149,8 @@ class LivePage(QWidget):
         outer.setSpacing(18)
         title = QHBoxLayout()
         title.setSpacing(12)
-        self.back = button('←  К выбору источника', self.host.go_home)
+        self.back = button('‹  Выбор источника', self.host.go_home)
+        self.back.setObjectName('quiet')
         title.addWidget(self.back)
         title.addStretch()
         self.detach = button('Открыть в отдельном окне', self.open_transcript_window)
@@ -188,21 +198,18 @@ class LivePage(QWidget):
         self.files.setMinimumWidth(0)
         self.files.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         words.addWidget(self.files)
+        self.share = ShareFileButton(self.create_share_file)
+        self.share.setEnabled(False)
+        self.preview.textChanged.connect(
+            lambda: self.share.setEnabled(not self.preview.document().isEmpty()))
         self.files.hide()
-        text_actions = QHBoxLayout()
-        text_actions.setSpacing(12)
         self.folder = button('Открыть папку', self.open_folder)
         self.folder.setEnabled(False)
         self.copy = button('Копировать текст', self.copy_text)
-        text_actions.addWidget(self.folder)
-        text_actions.addStretch()
         self.timestamps = button('Добавить таймкоды', lambda: None)
         self.timestamps.setCheckable(True)
         self.timestamps.setToolTip('Таймкоды в окне, копируемом тексте и файлах следующего сеанса')
-        text_actions.addWidget(self.timestamps)
-        text_actions.addStretch()
-        text_actions.addWidget(self.copy)
-        words.addLayout(text_actions)
+        words.addLayout(AlignedRow([self.folder, self.timestamps], [self.share, self.copy]))
         columns.addLayout(words, 1, 0)
 
         panel = QFrame()
@@ -494,6 +501,16 @@ class LivePage(QWidget):
 
     def copy_text(self):
         QApplication.clipboard().setText(self.preview.toPlainText())
+
+    def create_share_file(self):
+        text = self.preview.toPlainText()
+        if not text.strip():
+            raise ValueError('Пока нет текста для передачи')
+        directory = ROOT / 'output' / 'shared'
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f'Эфир_{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:6]}.txt'
+        path.write_text(text + '\n', encoding='utf-8')
+        return path
 
     def open_folder(self):
         if self.paths:

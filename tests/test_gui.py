@@ -123,6 +123,8 @@ class GuiTests(unittest.TestCase):
         self.window.timestamps.setChecked(False)
         result = Result(None, Path('result.md'), 'Test', 'Только Markdown')
         self.window.completed(result)
+        self.assertTrue(self.window.share.isEnabled())
+        self.assertEqual(self.window.share_result_file(), Path('result.md'))
         self.window.copy_text()
         self.assertEqual(self.app.clipboard().text(), 'Только Markdown')
         self.assertTrue(self.window.open_txt.isHidden())
@@ -132,6 +134,7 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.window.pages.currentIndex(), 0)
         self.assertEqual(self.window.format.currentData(), ('md',))
         self.assertEqual(self.window.preview.toPlainText(), '')
+        self.assertFalse(self.window.share.isEnabled())
         self.assertTrue(self.window.timestamps.isChecked())
 
     def test_timestamp_choice_is_passed_to_worker_for_both_sources(self):

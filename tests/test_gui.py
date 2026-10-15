@@ -149,6 +149,19 @@ class GuiTests(unittest.TestCase):
                         self.assertEqual(worker.call_args.args[0].timestamps, enabled)
                     self.window.worker = None
 
+    def test_timestamp_buttons_select_one_state_and_reset(self):
+        for control, enabled in ((self.window.timestamps_off, False),
+                                 (self.window.timestamps_off, False),
+                                 (self.window.timestamps, True),
+                                 (self.window.timestamps, True)):
+            control.click()
+            self.assertEqual(self.window.timestamps.isChecked(), enabled)
+            self.assertEqual(self.window.timestamps_off.isChecked(), not enabled)
+        self.window.timestamps_off.click()
+        self.window.go_home()
+        self.assertTrue(self.window.timestamps.isChecked())
+        self.assertFalse(self.window.timestamps_off.isChecked())
+
     def test_source_cards_route_to_correct_setup(self):
         self.window.go_home()
         self.window.file_card.click()

@@ -32,6 +32,12 @@ QPushButton#primary:hover { background: #e1a16d; }
 QPushButton#primary:disabled { background: #614936; border-color: #614936; color: #ad9480; }
 QPushButton#quiet { background: transparent; border: 1px solid transparent; color: #c2b3a4; }
 QPushButton#quiet:hover { color: #e9ad7a; background: #332c26; }
+QPushButton#liveTool { background: transparent; border: 1px solid transparent; padding: 0; border-radius: 7px; }
+QPushButton#liveTool:hover { background: #3b322a; border-color: transparent; }
+QPushButton#liveTool:pressed { background: #514032; }
+QPushButton#liveTool:checked { background: #63462f; border-color: #a37550; }
+QPushButton#liveTool:focus { border-color: #e4ac7b; }
+QPushButton#liveTool:disabled { background: transparent; border-color: transparent; }
 QPushButton#exit { background: #654039; border: 1px solid #a16b59; color: #f3d5c8; }
 QPushButton#exit:hover { background: #7c493e; border-color: #cb8b70; }
 QPushButton#exit:pressed { background: #55332e; }
@@ -41,7 +47,8 @@ QCheckBox::indicator:checked { image: url(__CHECKMARK__); background: #cf8851; b
 QCheckBox::indicator:disabled { border-color: #574a40; }
 QPushButton#sourceCard { text-align: left; background: #2b2926; border: 1px solid #514337; border-radius: 16px; }
 QPushButton#sourceCard:hover { background: #342c25; border: 1px solid #d39362; }
-QPushButton#sourceCard:focus { border: 2px solid #d39362; }
+QPushButton#sourceCard:focus { border: 1px solid #514337; }
+QPushButton#sourceCard:hover:focus { background: #342c25; border: 1px solid #d39362; }
 QLineEdit, QComboBox, QPlainTextEdit { background: #24221f; border: 1px solid #5a4c3e; border-radius: 8px; padding: 11px; selection-background-color: #875c3d; }
 QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus { border-color: #d39362; }
 QLineEdit:disabled, QComboBox:disabled { color: #8d8379; border-color: #443b33; }

@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import QEvent, QThread, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QSize, QThread, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QTextCursor
 from PySide6.QtMultimedia import QMediaDevices
 from PySide6.QtWidgets import (
@@ -17,7 +17,7 @@ from src.gui import ROOT, button, label
 from src.live import LiveJob, output_devices, run_live, timestamp
 from src.sharing import ShareFileButton
 from src.theme import STYLE
-from src.widgets import AlignedRow
+from src.widgets import line_icon
 
 
 class LiveWorker(QThread):
@@ -154,7 +154,12 @@ class LivePage(QWidget):
         title.addWidget(self.back)
         title.addStretch()
         self.detach = button('Открыть в отдельном окне', self.open_transcript_window)
-        title.addWidget(self.detach)
+        self.toolbar = QWidget()
+        self.toolbar.setObjectName('liveToolbar')
+        toolbar = QHBoxLayout(self.toolbar)
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setSpacing(4)
+        title.addWidget(self.toolbar)
 
         columns = QGridLayout()
         columns.setHorizontalSpacing(24)
@@ -209,7 +214,28 @@ class LivePage(QWidget):
         self.timestamps = button('Добавить таймкоды', lambda: None)
         self.timestamps.setCheckable(True)
         self.timestamps.setToolTip('Таймкоды в окне, копируемом тексте и файлах следующего сеанса')
-        words.addLayout(AlignedRow([self.folder, self.timestamps], [self.share, self.copy]))
+        for control, kind, name, hint in (
+            (self.folder, 'folder', 'Открыть папку', 'Открыть папку с файлами текущего эфира'),
+            (self.timestamps, 'timestamps', 'Добавить таймкоды',
+             'Включить таймкоды в тексте и файлах следующего сеанса'),
+            (self.share, 'share', 'Поделиться файлом',
+             'Поделиться TXT-снимком расшифровки: нажмите или перетащите в чат'),
+            (self.copy, 'copy', 'Копировать текст', 'Копировать всю расшифровку в буфер обмена'),
+            (self.detach, 'detach', 'Открыть в отдельном окне',
+             'Открыть текст эфира в отдельном окне'),
+        ):
+            control.setText('')
+            control.setObjectName('liveTool')
+            control.setIcon(line_icon(kind, 28))
+            control.setIconSize(QSize(24, 24))
+            control.setFixedSize(38, 38)
+            control.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            control.setAccessibleName(name)
+            control.setToolTip(hint)
+            toolbar.addWidget(control)
+        self.timestamps.toggled.connect(lambda enabled: self.timestamps.setToolTip(
+            'Таймкоды включены. Нажмите, чтобы выключить для следующего сеанса' if enabled
+            else 'Включить таймкоды в тексте и файлах следующего сеанса'))
         columns.addLayout(words, 1, 0)
 
         panel = QFrame()

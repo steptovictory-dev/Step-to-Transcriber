@@ -97,6 +97,28 @@ def line_icon(kind, size=48):
         painter.drawRoundedRect(QRectF(15, 14, 23, 29), 3, 3)
         painter.drawLine(QPointF(29, 8), QPointF(9, 8))
         painter.drawLine(QPointF(9, 8), QPointF(9, 33))
+    elif kind == 'detach':
+        painter.drawLine(QPointF(28, 8), QPointF(40, 8))
+        painter.drawLine(QPointF(40, 8), QPointF(40, 20))
+        painter.drawLine(QPointF(40, 8), QPointF(23, 25))
+        frame = QPainterPath(QPointF(22, 10))
+        for x, y in ((10, 10), (10, 38), (38, 38), (38, 26)):
+            frame.lineTo(x, y)
+        painter.drawPath(frame)
+    elif kind == 'folder':
+        folder = QPainterPath(QPointF(6, 15))
+        for x, y in ((6, 10), (20, 10), (25, 16), (41, 16), (41, 38), (6, 38), (6, 15)):
+            folder.lineTo(x, y)
+        painter.drawPath(folder)
+    elif kind == 'timestamps':
+        painter.drawEllipse(QPointF(24, 24), 17, 17)
+        painter.drawLine(QPointF(24, 13), QPointF(24, 24))
+        painter.drawLine(QPointF(24, 24), QPointF(32, 29))
+    elif kind == 'share':
+        for x, y in ((12, 24), (35, 11), (35, 37)):
+            painter.drawEllipse(QPointF(x, y), 5, 5)
+        painter.drawLine(QPointF(17, 21), QPointF(30, 14))
+        painter.drawLine(QPointF(17, 27), QPointF(30, 34))
     elif kind == 'live':
         painter.setBrush(QColor('#d99b6b'))
         painter.drawEllipse(QPointF(24, 24), 4, 4)
@@ -147,6 +169,7 @@ class SourceCard(QPushButton):
     def __init__(self, index, title, description, kind, parent=None):
         super().__init__(parent)
         self.setObjectName('sourceCard')
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.setMinimumHeight(280)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAccessibleName(title)

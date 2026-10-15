@@ -4,6 +4,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from src.gui import MainWindow
@@ -16,12 +18,59 @@ class GuiTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        self.window = MainWindow()
+        self.preferences_dir = tempfile.TemporaryDirectory()
+        self.preferences_path = str(Path(self.preferences_dir.name) / 'preferences.ini')
+        self.window = MainWindow(settings=QSettings(self.preferences_path, QSettings.Format.IniFormat))
         self.window.select_source(True)
         self.window.source.setText('https://youtu.be/1tCfHLFnXSw')
 
     def tearDown(self):
         self.window.close()
+        self.preferences_dir.cleanup()
+
+    def test_f11_toggles_fullscreen_and_restores_window_state(self):
+        self.window.show()
+        self.window.activateWindow()
+        QTest.qWait(100)
+        for maximized in (False, True):
+            if maximized:
+                self.window.showMaximized()
+            self.app.processEvents()
+            for page, field in ((1, self.window.source), (3, self.window.preview)):
+                self.window.navigate(page, animate=False)
+                field.setFocus()
+                QTest.keyClick(field, Qt.Key.Key_F11)
+                self.app.processEvents()
+                self.assertTrue(self.window.isFullScreen())
+                QTest.keyClick(field, Qt.Key.Key_F11)
+                self.app.processEvents()
+                self.assertFalse(self.window.isFullScreen())
+                self.assertEqual(self.window.isMaximized(), maximized)
+
+    def test_output_directory_is_shared_and_survives_home_and_restart(self):
+        from src.gui import ROOT
+        self.assertEqual(self.window.output.text(), str(ROOT / 'output'))
+        chosen = str(Path(self.preferences_dir.name) / 'Расшифровки')
+        self.window.output.setText(chosen)
+        self.window.go_home()
+        self.window.select_source(False)
+        self.assertEqual(self.window.output.text(), chosen)
+        self.window.select_source(True)
+        self.assertEqual(self.window.output.text(), chosen)
+        with patch('src.live_gui.LivePage.refresh_devices'):
+            self.window.open_live()
+            live = self.window.live_window
+            self.assertEqual(live.output.text(), chosen)
+            changed = str(Path(self.preferences_dir.name) / 'Эфиры')
+            live.output.setText(changed)
+            self.assertEqual(self.window.output.text(), changed)
+            self.window.go_home()
+            self.assertEqual(self.window.output.text(), changed)
+        self.window.close()
+        self.window = MainWindow(settings=QSettings(self.preferences_path, QSettings.Format.IniFormat))
+        self.assertEqual(self.window.output.text(), changed)
+        self.window.output.clear()
+        self.assertEqual(self.window.output_directory(), changed)
 
     def wait_for_worker(self):
         deadline = time.monotonic() + 10

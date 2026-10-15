@@ -1,8 +1,8 @@
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QSettings, QThread, QTimer, Qt, QUrl, Signal, Slot
+from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
@@ -62,8 +62,11 @@ class Worker(QThread):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, settings=None):
         super().__init__()
+        self.preferences = settings if settings is not None else QSettings(
+            QSettings.Format.IniFormat, QSettings.Scope.UserScope,
+            'Steptovictory', 'StepToTranscriber')
         self.worker = None
         self.live_window = None
         self.result = None
@@ -74,6 +77,9 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(str(ROOT / 'project' / 'assets' / 'step-to-transcriber.ico')))
         self.resize(1240, 760)
         self.setMinimumSize(1060, 680)
+        self.fullscreen_shortcut = QShortcut(QKeySequence('F11'), self)
+        self.fullscreen_shortcut.setAutoRepeat(False)
+        self.fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
         self.setAcceptDrops(True)
         self.setStyleSheet(STYLE)
         shell = QWidget()
@@ -131,6 +137,14 @@ class MainWindow(QMainWindow):
         footer_row.addWidget(github)
         outer.addWidget(footer)
         self.navigate(0, animate=False)
+
+    def toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+            self.restoreGeometry(self.windowed_geometry)
+        else:
+            self.windowed_geometry = self.saveGeometry()
+            self.showFullScreen()
 
     def page(self):
         page = QWidget()
@@ -221,7 +235,8 @@ class MainWindow(QMainWindow):
         self.model.addItem('large-v3 (экспериментальный режим)', 'large-v3')
         advanced_form.addRow('Модель', self.model)
         out_row = QHBoxLayout()
-        self.output = QLineEdit(str(ROOT / 'output'))
+        self.output = QLineEdit(self.output_directory())
+        self.output.textChanged.connect(self.remember_output_directory)
         out_row.addWidget(self.output, 1)
         out_row.addWidget(button('Изменить', self.choose_output))
         advanced_form.addRow('Папка результатов', out_row)
@@ -378,7 +393,6 @@ class MainWindow(QMainWindow):
         self.format.setCurrentIndex(0)
         self.model.setCurrentIndex(0)
         self.timestamps.setChecked(True)
-        self.output.setText(str(ROOT / 'output'))
         self.advanced.hide()
         self.more.setText('Дополнительные настройки  +')
         self.copy_reset.stop()
@@ -401,6 +415,20 @@ class MainWindow(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, 'Папка результатов', self.output.text())
         if path:
             self.output.setText(path)
+
+    def output_directory(self):
+        return self.preferences.value('output_directory', str(ROOT / 'output'), type=str)
+
+    def remember_output_directory(self, path):
+        if not path.strip():
+            return
+        self.preferences.setValue('output_directory', path)
+        self.preferences.sync()
+        for field in (self.output, self.live_window.output if self.live_window else None):
+            if field is not None and field.text() != path:
+                field.blockSignals(True)
+                field.setText(path)
+                field.blockSignals(False)
 
     def inspect_source(self):
         if self.is_youtube or not self.source.text().strip():
@@ -585,6 +613,8 @@ class MainWindow(QMainWindow):
             self.cancel_job()
             event.ignore()
         else:
+            if self.live_window and self.live_window.transcript_window:
+                self.live_window.transcript_window.close()
             event.accept()
 
     def open_live(self):

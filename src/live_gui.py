@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QThread, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QTextCursor
 from PySide6.QtMultimedia import QMediaDevices
 from PySide6.QtWidgets import (
@@ -11,8 +11,9 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPlainTextEdit, QProgressBar, QSizePolicy, QVBoxLayout, QWidget,
 )
 
-from src.gui import ROOT, button, label
+from src.gui import button, label
 from src.live import LiveJob, output_devices, run_live, timestamp
+from src.theme import STYLE
 
 
 class LiveWorker(QThread):
@@ -37,6 +38,92 @@ class LiveWorker(QThread):
             self.failed.emit(str(error))
 
 
+class TranscriptWindow(QWidget):
+    """Independent text view controlling the existing live session."""
+
+    def __init__(self, live):
+        super().__init__(None, Qt.WindowType.Window)
+        self.live = live
+        self.setObjectName('shell')
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        self.setWindowTitle('Текст эфира / Step to Transcriber')
+        self.setWindowIcon(live.host.windowIcon())
+        self.setStyleSheet(STYLE)
+        self.resize(900, 620)
+        self.setMinimumSize(760, 360)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+        self.preview = QPlainTextEdit()
+        self.preview.setObjectName('transcript')
+        self.preview.setReadOnly(True)
+        self.preview.setPlaceholderText('Здесь появится текст эфира')
+        self.preview.setPlainText(live.preview.toPlainText())
+        layout.addWidget(self.preview, 1)
+        actions = QHBoxLayout()
+        actions.setSpacing(12)
+        self.start = button('Начать расшифровку', self.start_session, primary=True)
+        self.stop = button('Остановить', live.stop.click)
+        self.stop.setObjectName('exit')
+        self.timestamps = button('Добавить таймкоды', live.timestamps.click)
+        self.timestamps.setCheckable(True)
+        self.timestamps.setChecked(live.timestamps.isChecked())
+        self.timestamps.setToolTip(live.timestamps.toolTip())
+        self.copy = button('Копировать текст', live.copy_text)
+        actions.addWidget(self.start)
+        actions.addWidget(self.stop)
+        actions.addStretch()
+        actions.addWidget(self.timestamps)
+        actions.addWidget(self.copy)
+        layout.addLayout(actions)
+        live.preview.document().contentsChange.connect(self.sync_text_change)
+        live.start.installEventFilter(self)
+        live.stop.installEventFilter(self)
+        live.timestamps.installEventFilter(self)
+        live.timestamps.toggled.connect(self.timestamps.setChecked)
+        self.sync_controls()
+
+    def start_session(self):
+        self.live.start.click()
+        if self.live.worker is None:
+            self.show_settings()
+
+    def show_settings(self):
+        self.live.host.open_live()
+        if self.live.host.isMinimized():
+            self.live.host.showNormal()
+        else:
+            self.live.host.show()
+        self.live.host.raise_()
+        self.live.host.activateWindow()
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.EnabledChange:
+            self.sync_controls()
+        return super().eventFilter(watched, event)
+
+    def sync_controls(self):
+        self.start.setEnabled(self.live.start.isEnabled())
+        self.stop.setEnabled(self.live.stop.isEnabled())
+        self.timestamps.setEnabled(self.live.timestamps.isEnabled())
+
+    def sync_text_change(self, position, removed, added):
+        scrollbar = self.preview.verticalScrollBar()
+        previous = scrollbar.value()
+        follow = previous >= scrollbar.maximum() - 5
+        source = QTextCursor(self.live.preview.document())
+        source.setPosition(position)
+        source.setPosition(min(position + added, source.document().characterCount() - 1),
+                           QTextCursor.MoveMode.KeepAnchor)
+        target = QTextCursor(self.preview.document())
+        target.setPosition(min(position, target.document().characterCount() - 1))
+        target.setPosition(min(position + removed, target.document().characterCount() - 1),
+                           QTextCursor.MoveMode.KeepAnchor)
+        target.removeSelectedText()
+        target.insertFragment(source.selection())
+        scrollbar.setValue(scrollbar.maximum() if follow else previous)
+
+
 class LivePage(QWidget):
     session_finished = Signal()
 
@@ -44,24 +131,28 @@ class LivePage(QWidget):
         super().__init__(parent)
         self.host = parent
         self.worker = None
+        self.transcript_window = None
         self.paths = []
         self.error = False
         self.session_timestamps = False
         outer = QVBoxLayout(self)
         outer.setContentsMargins(36, 14, 36, 14)
         outer.setSpacing(18)
-        title = QGridLayout()
+        title = QHBoxLayout()
         title.setSpacing(12)
         self.back = button('←  К выбору источника', self.host.go_home)
-        title.addWidget(self.back, 0, 0, Qt.AlignmentFlag.AlignLeft)
-        title.addWidget(label('ПРЯМОЙ ЭФИР', 'liveBadge'), 0, 2, Qt.AlignmentFlag.AlignRight)
-        title.setColumnMinimumWidth(0, self.back.sizeHint().width())
-        title.setColumnMinimumWidth(2, self.back.sizeHint().width())
-        title.setColumnStretch(1, 1)
-        outer.addLayout(title)
+        title.addWidget(self.back)
+        title.addStretch()
+        self.detach = button('Открыть в отдельном окне', self.open_transcript_window)
+        title.addWidget(self.detach)
 
-        columns = QHBoxLayout()
-        columns.setSpacing(24)
+        columns = QGridLayout()
+        columns.setHorizontalSpacing(24)
+        columns.setVerticalSpacing(18)
+        columns.setColumnStretch(0, 1)
+        columns.setRowStretch(1, 1)
+        columns.addLayout(title, 0, 0)
+        columns.addWidget(label('ПРЯМОЙ ЭФИР', 'liveBadge'), 0, 1, Qt.AlignmentFlag.AlignRight)
         words = QVBoxLayout()
         words.setSpacing(12)
 
@@ -112,7 +203,7 @@ class LivePage(QWidget):
         text_actions.addStretch()
         text_actions.addWidget(self.copy)
         words.addLayout(text_actions)
-        columns.addLayout(words, 1)
+        columns.addLayout(words, 1, 0)
 
         panel = QFrame()
         panel.setObjectName('panel')
@@ -178,7 +269,8 @@ class LivePage(QWidget):
         output_group.addWidget(label('Папка результатов', 'small'))
         output_row = QHBoxLayout()
         output_row.setSpacing(10)
-        self.output = QLineEdit(str(ROOT / 'output'))
+        self.output = QLineEdit(self.host.output_directory())
+        self.output.textChanged.connect(self.host.remember_output_directory)
         self.output.setMinimumWidth(0)
         self.browse = button('Изменить', self.choose_output)
         output_row.addWidget(self.output, 1)
@@ -217,7 +309,7 @@ class LivePage(QWidget):
         actions.addWidget(self.start, 3)
         actions.addWidget(self.stop, 2)
         settings.addLayout(actions)
-        columns.addWidget(panel)
+        columns.addWidget(panel, 1, 1)
         outer.addLayout(columns, 1)
 
         self.level_timer = QTimer(self)
@@ -229,6 +321,15 @@ class LivePage(QWidget):
         self.media_devices = QMediaDevices(self)
         self.media_devices.audioOutputsChanged.connect(self.windows_device_changed)
         QTimer.singleShot(0, self.refresh_devices)
+
+    def open_transcript_window(self):
+        if self.transcript_window is None:
+            self.transcript_window = TranscriptWindow(self)
+        self.transcript_window.show()
+        if self.transcript_window.isMinimized():
+            self.transcript_window.showNormal()
+        self.transcript_window.raise_()
+        self.transcript_window.activateWindow()
 
     def refresh_devices(self):
         if self.worker:
@@ -369,6 +470,8 @@ class LivePage(QWidget):
     def failed(self, text):
         self.error = True
         self.status.setText(text + ('\nУже полученный текст сохранён в файлах сеанса' if self.paths else ''))
+        if self.transcript_window and self.transcript_window.isVisible():
+            self.transcript_window.show_settings()
 
     def stop_session(self):
         if self.worker:

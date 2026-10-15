@@ -1,6 +1,8 @@
 import logging
 from pathlib import Path
 
+from src.i18n import retranslate, set_language, tr
+
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QSettings, QThread, QTimer, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -12,14 +14,14 @@ from PySide6.QtWidgets import (
 from src.audio import get_audio_track_count
 from src.pipeline import Job, run_job
 from src.sharing import ShareFileButton
-from src.theme import STYLE
-from src.widgets import AlignedRow, SourceCard, Waveform, line_icon
+from src.theme import theme_style
+from src.widgets import AlignedRow, GuitarKnob, SourceCard, Waveform, line_icon
 from src.youtube import normalize_video_url
 
 
 ROOT = Path(__file__).resolve().parents[2]
 GITHUB = 'https://github.com/steptovictory-dev'
-MEDIA_FILTER = 'Медиа (*.mp4 *.mkv *.mov *.webm *.mp3 *.wav *.m4a *.flac *.ogg *.opus)'
+MEDIA_FILTER = tr('Медиа (*.mp4 *.mkv *.mov *.webm *.mp3 *.wav *.m4a *.flac *.ogg *.opus)')
 MEDIA_EXTENSIONS = {'.mp4', '.mkv', '.mov', '.webm', '.mp3', '.wav', '.m4a', '.flac', '.ogg', '.opus'}
 
 
@@ -68,6 +70,12 @@ class MainWindow(QMainWindow):
         self.preferences = settings if settings is not None else QSettings(
             QSettings.Format.IniFormat, QSettings.Scope.UserScope,
             'Steptovictory', 'StepToTranscriber')
+        self.ui_language = self.preferences.value('ui_language', 'ru', type=str)
+        self.ui_theme = self.preferences.value('ui_theme', 'dark', type=str)
+        self.ui_language = self.ui_language if self.ui_language in ('ru', 'en') else 'ru'
+        self.ui_theme = self.ui_theme if self.ui_theme in ('dark', 'light') else 'dark'
+        set_language(self.ui_language)
+        QApplication.instance().setProperty('ui_theme', self.ui_theme)
         self.worker = None
         self.live_window = None
         self.result = None
@@ -82,7 +90,7 @@ class MainWindow(QMainWindow):
         self.fullscreen_shortcut.setAutoRepeat(False)
         self.fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
         self.setAcceptDrops(True)
-        self.setStyleSheet(STYLE)
+        self.setStyleSheet(theme_style(self.ui_theme))
         shell = QWidget()
         shell.setObjectName('shell')
         self.setCentralWidget(shell)
@@ -93,19 +101,37 @@ class MainWindow(QMainWindow):
         header = QFrame()
         header.setObjectName('header')
         row = QHBoxLayout(header)
-        row.setContentsMargins(36, 20, 36, 18)
+        row.setContentsMargins(36, 8, 36, 4)
         brand = label('Step to Transcriber', 'brand')
         row.addWidget(brand)
         row.addStretch()
-        row.addWidget(label('LOCAL AUDIO STUDIO', 'eyebrow'))
+        studio = QVBoxLayout()
+        studio.setSpacing(14)
+        studio.addWidget(label('LOCAL AUDIO STUDIO', 'eyebrow'), alignment=Qt.AlignmentFlag.AlignHCenter)
+        switches = QVBoxLayout()
+        switches.setSpacing(10)
+        self.theme_switch = GuitarKnob('DARK', 'LIGHT')
+        self.language_switch = GuitarKnob('RU', 'EN')
+        self.theme_switch.setChecked(self.ui_theme == 'light')
+        self.language_switch.setChecked(self.ui_language == 'en')
+        for control, hint in ((self.language_switch, tr('Язык интерфейса: русский / английский')),
+                              (self.theme_switch, tr('Тёмная / светлая тема'))):
+            control.setToolTip(hint)
+            control.setAccessibleName(hint)
+            switches.addWidget(control, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self.setTabOrder(self.language_switch, self.theme_switch)
+        self.theme_switch.toggled.connect(self.change_theme)
+        self.language_switch.toggled.connect(self.change_language)
+        studio.addLayout(switches)
+        row.addLayout(studio)
         outer.addWidget(header)
 
         self.route = QWidget()
         route = QHBoxLayout(self.route)
         route.setSpacing(12)
-        route.setContentsMargins(40, 19, 40, 10)
+        route.setContentsMargins(40, 0, 40, 7)
         self.steps = []
-        for index, text in enumerate(('Источник', 'Подготовка', 'Обработка', 'Результат')):
+        for index, text in enumerate((tr('Источник'), tr('Подготовка'), tr('Обработка'), tr('Результат'))):
             step = label(f'0{index + 1}  {text}', 'step')
             self.steps.append(step)
             route.addWidget(step)
@@ -130,7 +156,7 @@ class MainWindow(QMainWindow):
         footer.setObjectName('footer')
         footer_row = QHBoxLayout(footer)
         footer_row.setContentsMargins(36, 12, 36, 12)
-        footer_row.addWidget(label('Разработчик: Steptovictory', 'small'))
+        footer_row.addWidget(label(tr('Разработчик: Steptovictory'), 'small'))
         footer_row.addStretch()
         github = button('GitHub / steptovictory-dev', lambda: QDesktopServices.openUrl(QUrl(GITHUB)))
         github.setObjectName('quiet')
@@ -138,6 +164,39 @@ class MainWindow(QMainWindow):
         footer_row.addWidget(github)
         outer.addWidget(footer)
         self.navigate(0, animate=False)
+        self.apply_appearance()
+
+    def apply_appearance(self):
+        QApplication.instance().setProperty('ui_theme', self.ui_theme)
+        self.setStyleSheet(theme_style(self.ui_theme))
+        for control in (self.theme_switch, self.language_switch):
+            control.light = self.ui_theme == 'light'
+            control.update()
+        # The transcript window is top-level, so it needs its own stylesheet
+        if self.live_window and self.live_window.transcript_window:
+            self.live_window.transcript_window.setStyleSheet(theme_style(self.ui_theme))
+        for widget in self.findChildren(QWidget):
+            kind = widget.property('icon_kind')
+            if kind:
+                if isinstance(widget, QLabel):
+                    widget.setPixmap(line_icon(kind, 32).pixmap(32, 32))
+                elif isinstance(widget, QPushButton):
+                    widget.setIcon(line_icon(kind, 28))
+
+    def change_theme(self, light):
+        self.ui_theme = 'light' if light else 'dark'
+        self.preferences.setValue('ui_theme', self.ui_theme)
+        self.preferences.sync()
+        self.apply_appearance()
+
+    def change_language(self, english):
+        self.ui_language = 'en' if english else 'ru'
+        set_language(self.ui_language)
+        self.preferences.setValue('ui_language', self.ui_language)
+        self.preferences.sync()
+        retranslate(self)
+        if self.live_window and self.live_window.transcript_window:
+            retranslate(self.live_window.transcript_window)
 
     def toggle_fullscreen(self):
         if self.isFullScreen():
@@ -158,15 +217,15 @@ class MainWindow(QMainWindow):
     def build_home(self):
         page, layout = self.page()
         layout.addStretch(1)
-        layout.addWidget(label('АУДИО / ВИДЕО / ЭФИР', 'eyebrow'))
-        layout.addWidget(label('Превращаем звук в слова', 'heading'))
-        layout.addWidget(label('Выберите файл, ссылку на видео или звук прямого эфира', 'muted'))
+        layout.addWidget(label(tr('АУДИО / ВИДЕО / ЭФИР'), 'eyebrow'))
+        layout.addWidget(label(tr('Превращаем звук в слова'), 'heading'))
+        layout.addWidget(label(tr('Выберите файл, ссылку на видео или звук прямого эфира'), 'muted'))
         cards = QHBoxLayout()
         cards.setSpacing(16)
-        self.file_card = SourceCard('01', 'Файл на компьютере', 'Выберите аудио или видео\nили перетащите файл в окно', 'file')
-        self.url_card = SourceCard('02', 'Ссылка на видео', 'YouTube, VK Видео, Rutube\nTwitch, VK Видео Live: записи эфиров', 'link')
-        self.live_card = SourceCard('03', 'Прямой эфир', 'Вебинары и стримы\nЗвук компьютера без ссылки', 'live')
-        self.live_card.setToolTip('Расшифровка звука компьютера в этом окне')
+        self.file_card = SourceCard('01', tr('Файл на компьютере'), tr('Выберите аудио или видео\nили перетащите файл в окно'), 'file')
+        self.url_card = SourceCard('02', tr('Ссылка на видео'), tr('YouTube, VK Видео, Rutube\nTwitch, VK Видео Live: записи эфиров'), 'link')
+        self.live_card = SourceCard('03', tr('Прямой эфир'), tr('Вебинары и стримы\nЗвук компьютера без ссылки'), 'live')
+        self.live_card.setToolTip(tr('Расшифровка звука компьютера в этом окне'))
         self.file_card.clicked.connect(lambda: self.select_source(False))
         self.url_card.clicked.connect(lambda: self.select_source(True))
         self.live_card.clicked.connect(self.open_live)
@@ -174,23 +233,21 @@ class MainWindow(QMainWindow):
         cards.addWidget(self.url_card, 1)
         cards.addWidget(self.live_card, 1)
         layout.addLayout(cards)
-        layout.addWidget(label('Обработка на вашем компьютере / язык определяется автоматически', 'small'))
+        layout.addWidget(label(tr('Обработка на вашем компьютере / язык определяется автоматически'), 'small'))
         layout.addStretch(2)
         return page
 
     def build_setup(self):
         page, layout = self.page()
-        layout.setContentsMargins(40, 12, 40, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(40, 10, 40, 10)
+        layout.setSpacing(8)
         top = QHBoxLayout()
-        back = button('‹  Выбор источника', self.go_home)
+        back = button(tr('‹  Выбор источника'), self.go_home)
         back.setObjectName('quiet')
         top.addWidget(back)
         top.addStretch()
-        self.source_badge = label('ФАЙЛ', 'badge')
-        top.addWidget(self.source_badge)
         layout.addLayout(top)
-        layout.addWidget(label('Подготовим вашу запись', 'heading'))
+        layout.addWidget(label(tr('Подготовим вашу запись'), 'heading'))
         self.setup_hint = label('', 'muted')
         layout.addWidget(self.setup_hint)
         self.settings = QFrame()
@@ -201,32 +258,32 @@ class MainWindow(QMainWindow):
         panel = QVBoxLayout(self.settings)
         panel.setContentsMargins(24, 12, 24, 12)
         panel.setSpacing(7)
-        self.input_label = label('ИСХОДНЫЙ ФАЙЛ', 'eyebrow')
+        self.input_label = label(tr('ИСХОДНЫЙ ФАЙЛ'), 'eyebrow')
         panel.addWidget(self.input_label)
         source_row = QHBoxLayout()
         self.source = QLineEdit()
         self.source.editingFinished.connect(self.inspect_source)
-        self.browse = button('Выбрать файл', self.choose_file)
+        self.browse = button(tr('Выбрать файл'), self.choose_file)
         source_row.addWidget(self.source, 1)
         source_row.addWidget(self.browse)
         panel.addLayout(source_row)
-        self.notice = label('Выберите файл для расшифровки', 'small')
+        self.notice = label(tr('Выберите файл для расшифровки'), 'small')
         self.notice.setWordWrap(True)
         panel.addWidget(self.notice)
         form = QFormLayout()
         form.setVerticalSpacing(8)
         self.format = QComboBox()
         self.format.addItem('Markdown (.md)', ('md',))
-        self.format.addItem('Обычный текст (.txt)', ('txt',))
-        self.format.addItem('Markdown + текст (.md и .txt)', ('md', 'txt'))
-        form.addRow('Формат результата', self.format)
+        self.format.addItem(tr('Обычный текст (.txt)'), ('txt',))
+        self.format.addItem(tr('Markdown + текст (.md и .txt)'), ('md', 'txt'))
+        form.addRow(tr('Формат результата'), self.format)
         self.track = QComboBox()
-        self.track.addItem('Дорожка 1 (автоматически)', 1)
+        self.track.addItem(tr('Дорожка 1 (автоматически)'), 1)
         self.track.setEnabled(False)
-        self.track_label = label('Аудиодорожка')
+        self.track_label = label(tr('Аудиодорожка'))
         form.addRow(self.track_label, self.track)
         panel.addLayout(form)
-        self.more = button('Дополнительные настройки  +', self.toggle_advanced)
+        self.more = button(tr('Дополнительные настройки  +'), self.toggle_advanced)
         self.more.setObjectName('quiet')
         panel.addWidget(self.more, alignment=Qt.AlignmentFlag.AlignLeft)
         self.advanced = QWidget()
@@ -234,23 +291,22 @@ class MainWindow(QMainWindow):
         advanced_form.setContentsMargins(0, 0, 0, 0)
         advanced_form.setHorizontalSpacing(14)
         advanced_form.setVerticalSpacing(8)
-        self.timestamps = button('Вкл', lambda: None)
+        self.timestamps = button(tr('Вкл'), lambda: None)
         self.timestamps.setCheckable(True)
         self.timestamps.setObjectName('timestampToggle')
         self.timestamps.setFixedSize(86, 30)
         self.timestamps.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        self.timestamps.setAccessibleName('Таймкоды')
+        self.timestamps.setAccessibleName(tr('Таймкоды'))
         self.timestamps.setStyleSheet(
-            'QPushButton { padding: 3px 14px; border-radius: 15px; } '
-            'QPushButton:checked { background: #63462f; border-color: #d39362; color: #f4dfcb; }')
+            'QPushButton { padding: 3px 14px; border-radius: 15px; }')
         self.timestamps.setChecked(True)
-        self.timestamps.setToolTip('Таймкоды абзацев в результате, копируемом тексте и файлах MD / TXT')
-        self.timestamps_off = button('Выкл', lambda: self.timestamps.setChecked(False))
+        self.timestamps.setToolTip(tr('Таймкоды абзацев в результате, копируемом тексте и файлах MD / TXT'))
+        self.timestamps_off = button(tr('Выкл'), lambda: self.timestamps.setChecked(False))
         self.timestamps_off.setCheckable(True)
         self.timestamps_off.setFixedSize(86, 30)
         self.timestamps_off.setFocusPolicy(Qt.FocusPolicy.TabFocus)
-        self.timestamps_off.setAccessibleName('Выключить таймкоды')
-        self.timestamps_off.setToolTip('Не добавлять таймкоды в текст и файлы результата')
+        self.timestamps_off.setAccessibleName(tr('Выключить таймкоды'))
+        self.timestamps_off.setToolTip(tr('Не добавлять таймкоды в текст и файлы результата'))
         self.timestamps_off.setStyleSheet(self.timestamps.styleSheet())
         self.timestamps.toggled.connect(lambda enabled: self.timestamps_off.setChecked(not enabled))
         self.timestamps.clicked.connect(lambda: self.timestamps.setChecked(True))
@@ -261,29 +317,29 @@ class MainWindow(QMainWindow):
         timestamp_controls.addWidget(self.timestamps)
         timestamp_controls.addWidget(self.timestamps_off)
         timestamp_controls.addStretch()
-        advanced_form.addWidget(label('Таймкоды'), 0, 0)
+        advanced_form.addWidget(label(tr('Таймкоды')), 0, 0)
         advanced_form.addLayout(timestamp_controls, 0, 1)
         self.model = QComboBox()
-        self.model.addItem('turbo (рекомендуется)', 'turbo')
-        self.model.addItem('large-v3 (экспериментальный режим)', 'large-v3')
-        advanced_form.addWidget(label('Модель'), 1, 0)
+        self.model.addItem(tr('turbo (рекомендуется)'), 'turbo')
+        self.model.addItem(tr('large-v3 (экспериментальный режим)'), 'large-v3')
+        advanced_form.addWidget(label(tr('Модель')), 1, 0)
         advanced_form.addWidget(self.model, 1, 1)
         advanced_form.setColumnStretch(1, 1)
         out_row = QHBoxLayout()
         self.output = QLineEdit(self.output_directory())
         self.output.textChanged.connect(self.remember_output_directory)
         out_row.addWidget(self.output, 1)
-        out_row.addWidget(button('Изменить', self.choose_output))
-        advanced_form.addWidget(label('Папка результатов'), 2, 0)
+        out_row.addWidget(button(tr('Изменить'), self.choose_output))
+        advanced_form.addWidget(label(tr('Папка результатов')), 2, 0)
         advanced_form.addLayout(out_row, 2, 1)
         panel.addWidget(self.advanced)
         self.advanced.hide()
         layout.addWidget(self.settings)
         layout.addStretch()
         bottom = QHBoxLayout()
-        bottom.addWidget(label('Всё настроено для начала', 'small'))
+        bottom.addWidget(label(tr('Всё настроено для начала'), 'small'))
         bottom.addStretch()
-        self.start = button('Расшифровать  →', self.start_job, primary=True)
+        self.start = button(tr('Расшифровать  →'), self.start_job, primary=True)
         bottom.addWidget(self.start)
         layout.addLayout(bottom)
         return page
@@ -291,15 +347,15 @@ class MainWindow(QMainWindow):
     def build_processing(self):
         page, layout = self.page()
         layout.addStretch()
-        eyebrow = label('СЛУШАЕМ / РАСПОЗНАЁМ / СОХРАНЯЕМ', 'eyebrow')
+        eyebrow = label(tr('СЛУШАЕМ / РАСПОЗНАЁМ / СОХРАНЯЕМ'), 'eyebrow')
         eyebrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(eyebrow)
-        self.processing_title = label('Ваша запись становится текстом', 'heading')
+        self.processing_title = label(tr('Ваша запись становится текстом'), 'heading')
         self.processing_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.processing_title)
         self.wave = Waveform()
         layout.addWidget(self.wave)
-        self.status = label('Подготовка обработки', 'muted')
+        self.status = label(tr('Подготовка обработки'), 'muted')
         self.status.setWordWrap(True)
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status)
@@ -307,12 +363,12 @@ class MainWindow(QMainWindow):
         self.progress.setTextVisible(False)
         self.progress.setValue(0)
         layout.addWidget(self.progress)
-        self.percent = label('Подготавливаем запись…', 'small')
+        self.percent = label(tr('Подготавливаем запись…'), 'small')
         self.percent.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.percent)
         stages = QHBoxLayout()
         self.stage_labels = []
-        for text in ('Источник', 'Аудио', 'Распознавание', 'Сохранение'):
+        for text in (tr('Источник'), tr('Аудио'), tr('Распознавание'), tr('Сохранение')):
             item = label(text, 'step')
             item.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.stage_labels.append(item)
@@ -322,15 +378,15 @@ class MainWindow(QMainWindow):
         self.details.setReadOnly(True)
         self.details.setMaximumHeight(90)
         self.details.hide()
-        self.details_button = button('Подробности', lambda: self.details.setVisible(self.details.isHidden()))
+        self.details_button = button(tr('Подробности'), lambda: self.details.setVisible(self.details.isHidden()))
         self.details_button.setObjectName('quiet')
         layout.addWidget(self.details_button, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.details)
         actions = QHBoxLayout()
         actions.addStretch()
-        self.cancel = button('Отменить обработку', self.cancel_job)
+        self.cancel = button(tr('Отменить обработку'), self.cancel_job)
         self.cancel.setEnabled(False)
-        self.retry = button('Вернуться к записи', lambda: self.navigate(1))
+        self.retry = button(tr('Вернуться к записи'), lambda: self.navigate(1))
         self.retry.hide()
         actions.addWidget(self.cancel)
         actions.addWidget(self.retry)
@@ -341,30 +397,32 @@ class MainWindow(QMainWindow):
 
     def build_result(self):
         page, layout = self.page()
-        layout.addWidget(label('ГОТОВО', 'eyebrow'))
-        self.result_heading = label('Расшифровка закончена', 'heading')
+        layout.addWidget(label(tr('ГОТОВО'), 'eyebrow'))
+        self.result_heading = label(tr('Расшифровка закончена'), 'heading')
         self.share = ShareFileButton(self.share_result_file)
         self.share.setEnabled(False)
-        self.copy = button('Копировать текст', self.copy_text)
+        self.copy = button(tr('Копировать текст'), self.copy_text)
         self.copy.setIcon(line_icon('copy', 20))
+        self.copy.setProperty('icon_kind', 'copy')
         self.copy.setEnabled(False)
         self.copy_reset = QTimer(self)
         self.copy_reset.setSingleShot(True)
-        self.copy_reset.timeout.connect(lambda: self.copy.setText('Копировать текст'))
+        self.copy_reset.timeout.connect(lambda: self.copy.setText(tr('Копировать текст')))
         layout.addLayout(AlignedRow([self.result_heading], [self.share, self.copy]))
         self.result_title = label('', 'muted')
+        self.result_title.setProperty('userContent', True)
         self.result_title.setWordWrap(True)
         layout.addWidget(self.result_title)
         self.preview = QPlainTextEdit()
         self.preview.setObjectName('transcript')
         self.preview.setReadOnly(True)
         layout.addWidget(self.preview, 1)
-        self.open_folder = button('Открыть папку с результатом  ↗', self.open_result_folder)
-        self.open_txt = button('Открыть TXT', lambda: self.open_path(self.result.txt))
-        self.open_md = button('Открыть Markdown', lambda: self.open_path(self.result.markdown))
-        self.exit_button = button('Выход из приложения', self.close)
+        self.open_folder = button(tr('Открыть папку с результатом  ↗'), self.open_result_folder)
+        self.open_txt = button(tr('Открыть TXT'), lambda: self.open_path(self.result.txt))
+        self.open_md = button(tr('Открыть Markdown'), lambda: self.open_path(self.result.markdown))
+        self.exit_button = button(tr('Выход из приложения'), self.close)
         self.exit_button.setObjectName('exit')
-        self.new_button = button('Ещё одна расшифровка  →', self.go_home, primary=True)
+        self.new_button = button(tr('Ещё одна расшифровка  →'), self.go_home, primary=True)
         layout.addLayout(AlignedRow([self.exit_button, self.open_folder],
                                     [self.open_md, self.open_txt, self.new_button]))
         return page
@@ -389,17 +447,16 @@ class MainWindow(QMainWindow):
             return
         self.is_youtube = youtube
         self.source.clear()
-        self.source.setPlaceholderText('Полная ссылка на видео или запись эфира' if youtube else 'Путь к аудио или видео')
+        self.source.setPlaceholderText(tr('Полная ссылка на видео или запись эфира') if youtube else tr('Путь к аудио или видео'))
         self.browse.setVisible(not youtube)
         self.track.setVisible(not youtube)
         self.track_label.setVisible(not youtube)
         self.track.clear()
-        self.track.addItem('Дорожка 1 (автоматически)', 1)
+        self.track.addItem(tr('Дорожка 1 (автоматически)'), 1)
         self.track.setEnabled(False)
-        self.source_badge.setText('ВИДЕО ПО ССЫЛКЕ' if youtube else 'ЛОКАЛЬНЫЙ ФАЙЛ')
-        self.input_label.setText('ССЫЛКА НА РОЛИК' if youtube else 'ИСХОДНЫЙ ФАЙЛ')
-        self.setup_hint.setText('Видео и завершённые эфиры: запись загрузится автоматически' if youtube else 'Дорожка и язык выбраны автоматически, формат результата можно изменить')
-        self.notice.setText('Ссылка на один доступный ролик, без прямых эфиров' if youtube else 'Выберите файл или перетащите его в окно')
+        self.input_label.setText(tr('ССЫЛКА НА РОЛИК') if youtube else tr('ИСХОДНЫЙ ФАЙЛ'))
+        self.setup_hint.setText(tr('Видео и завершённые эфиры: запись загрузится автоматически') if youtube else tr('Дорожка и язык выбраны автоматически, формат результата можно изменить'))
+        self.notice.setText(tr('Ссылка на один доступный ролик, без прямых эфиров') if youtube else tr('Выберите файл или перетащите его в окно'))
         self.navigate(1)
         self.source.setFocus()
 
@@ -413,34 +470,34 @@ class MainWindow(QMainWindow):
         self.model.setCurrentIndex(0)
         self.timestamps.setChecked(True)
         self.advanced.hide()
-        self.more.setText('Дополнительные настройки  +')
+        self.more.setText(tr('Дополнительные настройки  +'))
         self.copy_reset.stop()
-        self.copy.setText('Копировать текст')
+        self.copy.setText(tr('Копировать текст'))
         self.copy.setEnabled(False)
         self.share.setEnabled(False)
         self.navigate(0)
 
     def share_result_file(self):
         if self.result is None:
-            raise ValueError('Сначала завершите расшифровку')
+            raise ValueError(tr('Сначала завершите расшифровку'))
         path = self.result.markdown or self.result.txt
         if path is None:
-            raise ValueError('Файл результата недоступен')
+            raise ValueError(tr('Файл результата недоступен'))
         return path
 
     def toggle_advanced(self):
         visible = self.advanced.isHidden()
         self.advanced.setVisible(visible)
-        self.more.setText('Скрыть настройки  −' if visible else 'Дополнительные настройки  +')
+        self.more.setText(tr('Скрыть настройки  −') if visible else tr('Дополнительные настройки  +'))
 
     def choose_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, 'Выбрать аудио или видео', str(ROOT / 'input'), MEDIA_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, tr('Выбрать аудио или видео'), str(ROOT / 'input'), tr(MEDIA_FILTER))
         if path:
             self.source.setText(path)
             self.inspect_source()
 
     def choose_output(self):
-        path = QFileDialog.getExistingDirectory(self, 'Папка результатов', self.output.text())
+        path = QFileDialog.getExistingDirectory(self, tr('Папка результатов'), self.output.text())
         if path:
             self.output.setText(path)
 
@@ -466,24 +523,24 @@ class MainWindow(QMainWindow):
         try:
             path = Path(self.source.text().strip().strip('"'))
             if path.suffix.lower() not in MEDIA_EXTENSIONS:
-                raise ValueError('Неподдерживаемый формат файла')
+                raise ValueError(tr('Неподдерживаемый формат файла'))
             count = get_audio_track_count(path)
             if count == 0:
-                raise ValueError('В файле нет аудиодорожек')
+                raise ValueError(tr('В файле нет аудиодорожек'))
             for number in range(1, count + 1):
-                self.track.addItem(f'Дорожка {number}' + (' (автоматически)' if count == 1 else ''), number)
+                self.track.addItem(tr(f'Дорожка {number}') + (tr(' (автоматически)') if count == 1 else ''), number)
             if previous and previous <= count:
                 self.track.setCurrentIndex(previous - 1)
             self.track.setEnabled(count > 1)
-            self.notice.setText(f'{path.name} / аудиодорожек: {count}' + (' / можно выбрать другую' if count > 1 else ''))
+            self.notice.setText(tr(f'{path.name} / аудиодорожек: {count}') + (tr(' / можно выбрать другую') if count > 1 else ''))
         except Exception as error:
-            self.notice.setText(str(error))
+            self.notice.setText(tr(str(error)))
 
     def start_job(self):
         if self.worker is not None:
             return
         if self.live_window and self.live_window.worker:
-            QMessageBox.warning(self, 'Идёт прямой эфир', 'Сначала остановите живую расшифровку')
+            QMessageBox.warning(self, tr('Идёт прямой эфир'), tr('Сначала остановите живую расшифровку'))
             return
         try:
             source = self.source.text().strip().strip('"')
@@ -492,9 +549,9 @@ class MainWindow(QMainWindow):
             else:
                 self.inspect_source()
                 if not self.track.count() or not Path(source).is_file():
-                    raise ValueError('Выберите доступный медиафайл с аудиодорожкой')
+                    raise ValueError(tr('Выберите доступный медиафайл с аудиодорожкой'))
             if not self.output.text().strip():
-                raise ValueError('Выберите папку результатов')
+                raise ValueError(tr('Выберите папку результатов'))
             job = Job(source, Path(self.output.text().strip()), self.is_youtube,
                       self.track.currentData() or 1, self.model.currentData(), self.format.currentData(),
                       timestamps=self.timestamps.isChecked())
@@ -508,9 +565,9 @@ class MainWindow(QMainWindow):
             self.cancel.setEnabled(True)
             self.start.setEnabled(False)
             self.new_button.setEnabled(False)
-            self.processing_title.setText('Ваша запись становится текстом')
+            self.processing_title.setText(tr('Ваша запись становится текстом'))
             self.update_progress(-1)
-            self.set_status('Подготовка обработки')
+            self.set_status(tr('Подготовка обработки'))
             self.navigate(2)
             self.wave.start()
             self.worker = Worker(job, self)
@@ -522,14 +579,14 @@ class MainWindow(QMainWindow):
             self.worker.finished.connect(self.finished)
             self.worker.start()
         except Exception as error:
-            QMessageBox.warning(self, 'Проверьте параметры', str(error))
+            QMessageBox.warning(self, tr('Проверьте параметры'), tr(str(error)))
 
     @Slot(str)
     def set_status(self, message):
-        self.details.appendPlainText(message)
+        self.details.appendPlainText(tr(message))
         if message.startswith(('YouTube:', 'VK Видео:', 'Rutube:', 'Twitch:', 'VK Видео Live:')):
             return
-        self.status.setText(message)
+        self.status.setText(tr(message))
         stage = 3 if 'Сохранение' in message else 2 if 'модели' in message else 1 if 'аудиодорожки' in message else 0
         for number, widget in enumerate(self.stage_labels):
             widget.setProperty('active', number == stage)
@@ -540,12 +597,12 @@ class MainWindow(QMainWindow):
     def update_progress(self, fraction):
         if fraction < 0:
             self.progress.setRange(0, 0)
-            self.percent.setText('Подготавливаем запись…')
+            self.percent.setText(tr('Подготавливаем запись…'))
         else:
             self.progress.setRange(0, 100)
             value = int(fraction * 100)
             self.progress.setValue(value)
-            self.percent.setText(f'{value}% текущего этапа')
+            self.percent.setText(tr(f'{value}% текущего этапа'))
 
     @Slot(object)
     def completed(self, result):
@@ -564,18 +621,18 @@ class MainWindow(QMainWindow):
     def failed(self, message):
         self.outcome = 'failed'
         self.wave.stop()
-        self.processing_title.setText('Не удалось завершить расшифровку')
-        self.status.setText(message.split('\n\n', 1)[0])
-        self.details.appendPlainText(message)
-        self.percent.setText('Проверьте источник и попробуйте ещё раз')
+        self.processing_title.setText(tr('Не удалось завершить расшифровку'))
+        self.status.setText(tr(message.split('\n\n', 1)[0]))
+        self.details.appendPlainText(tr(message))
+        self.percent.setText(tr('Проверьте источник и попробуйте ещё раз'))
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
 
     @Slot()
     def cancelled(self):
         self.outcome = 'cancelled'
-        self.status.setText('Обработка отменена')
-        self.notice.setText('Обработка отменена, можно выбрать другую запись')
+        self.status.setText(tr('Обработка отменена'))
+        self.notice.setText(tr('Обработка отменена, можно выбрать другую запись'))
 
     @Slot()
     def finished(self):
@@ -597,11 +654,11 @@ class MainWindow(QMainWindow):
         if self.worker:
             self.worker.requestInterruption()
             self.cancel.setEnabled(False)
-            self.status.setText('Останавливаем обработку, завершаем текущий шаг')
+            self.status.setText(tr('Останавливаем обработку, завершаем текущий шаг'))
 
     def copy_text(self):
         QApplication.clipboard().setText(self.preview.toPlainText())
-        self.copy.setText('Скопировано')
+        self.copy.setText(tr('Скопировано'))
         self.copy_reset.start(1800)
 
     def open_result_folder(self):
@@ -611,7 +668,7 @@ class MainWindow(QMainWindow):
 
     def open_path(self, path):
         if path and not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve()))):
-            QMessageBox.warning(self, 'Открытие файла', f'Не удалось открыть: {path}')
+            QMessageBox.warning(self, tr('Открытие файла'), tr(f'Не удалось открыть: {path}'))
 
     def dragEnterEvent(self, event):
         if self.worker is None and not (self.live_window and self.live_window.worker) and (event.mimeData().hasUrls() or event.mimeData().hasText()):

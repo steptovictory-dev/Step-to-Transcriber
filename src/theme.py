@@ -67,3 +67,34 @@ QToolTip { background: #342c25; color: #eee7dd; border: 1px solid #8e6443; paddi
 STYLE = STYLE.replace('__CHECKMARK__', (Path(__file__).resolve().parents[1] / 'assets' / 'checkmark.svg').as_posix())
 
 STYLE += 'QPushButton:checked { background: #63462f; border: 1px solid #d39362; color: #f4dfcb; }'
+
+# Each dark-theme token has an explicit warm light-theme counterpart
+LIGHT_COLORS = {
+    '#eee7dd': '#302b25', '#22211f': '#f2ebdd', '#3b3631': '#d4c6b0',
+    '#df9b66': '#995a34', '#d39362': '#995a34', '#f1e9dc': '#302b25',
+    '#b0a59b': '#706454', '#d99b6b': '#995a34', '#8d8379': '#7c7060',
+    '#332c25': '#eadcc8', '#dfaa7e': '#7b4829', '#574131': '#bba183',
+    '#29362a': '#e5ecde', '#b0d49e': '#3f6034', '#628755': '#90a57e',
+    '#e6ac7e': '#884b28', '#2b2926': '#faf6ed', '#484039': '#d4c6b0',
+    '#35302b': '#eee3d2', '#5b4d40': '#c1ab8e', '#44382e': '#e7d6bc',
+    '#c48350': '#995a34', '#514032': '#dcc5a6', '#e4ac7b': '#995a34',
+    '#847a70': '#998d7c', '#423a32': '#ddd3c3', '#cf8851': '#995a34',
+    '#201a15': '#fff8ec', '#e2a878': '#884b28', '#e1a16d': '#854b2b',
+    '#614936': '#dfcbb4', '#ad9480': '#827363', '#c2b3a4': '#70604d',
+    '#e9ad7a': '#884b28', '#332c26': '#eaddc9', '#3b322a': '#eadcc8',
+    '#63462f': '#995a34', '#a37550': '#884b28', '#654039': '#eee0d7',
+    '#a16b59': '#b78d79', '#f3d5c8': '#743d2e', '#7c493e': '#e4c9ba',
+    '#cb8b70': '#9d6a51', '#55332e': '#d9baaa', '#8e7058': '#b19472',
+    '#24221f': '#f5f0e5', '#efbf98': '#884b28', '#574a40': '#d6c9b6',
+    '#514337': '#d4c6b0', '#342c25': '#eee1cb', '#5a4c3e': '#c6b396',
+    '#875c3d': '#cfa985', '#443b33': '#d8cdbb', '#69492f': '#d9ba96',
+    '#282622': '#f5f0e5', '#4a4036': '#cfbfa7', '#34302a': '#e2d6c1',
+    '#6b5745': '#bca17e', '#8e6443': '#b19472', '#f4dfcb': '#fff8ec',
+}
+
+
+def theme_style(mode='dark'):
+    if mode != 'light':
+        return STYLE
+    import re
+    return re.sub(r'#[0-9a-fA-F]{6}', lambda match: LIGHT_COLORS.get(match[0].lower(), match[0]), STYLE)

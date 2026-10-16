@@ -3,11 +3,11 @@ from pathlib import Path
 
 from src.i18n import retranslate, set_language, tr
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QSettings, QThread, QTimer, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QSettings, QSize, QThread, QTimer, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFormLayout, QFrame, QGraphicsOpacityEffect,
-    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
+    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
     QProgressBar, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
@@ -195,6 +195,9 @@ class MainWindow(QMainWindow):
         self.preferences.setValue('ui_language', self.ui_language)
         self.preferences.sync()
         retranslate(self)
+        for action, text in ((self.open_md, 'Открыть Markdown'), (self.open_txt, 'Открыть TXT'),
+                             (self.folder_action, 'Открыть папку')):
+            action.setText(tr(text))
         if self.live_window and self.live_window.transcript_window:
             retranslate(self.live_window.transcript_window)
 
@@ -402,13 +405,37 @@ class MainWindow(QMainWindow):
         self.share = ShareFileButton(self.share_result_file)
         self.share.setEnabled(False)
         self.copy = button(tr('Копировать текст'), self.copy_text)
-        self.copy.setIcon(line_icon('copy', 20))
-        self.copy.setProperty('icon_kind', 'copy')
         self.copy.setEnabled(False)
         self.copy_reset = QTimer(self)
         self.copy_reset.setSingleShot(True)
-        self.copy_reset.timeout.connect(lambda: self.copy.setText(tr('Копировать текст')))
-        layout.addLayout(AlignedRow([self.result_heading], [self.share, self.copy]))
+        self.copy_reset.timeout.connect(lambda: self.copy.setToolTip(tr('Копировать всю расшифровку в буфер обмена')))
+        self.result_toolbar = QWidget()
+        toolbar = QHBoxLayout(self.result_toolbar)
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setSpacing(4)
+        self.open_folder = button('', self.show_result_files)
+        self.result_timestamps = button('', self.toggle_result_timestamps)
+        self.result_timestamps.setCheckable(True)
+        for control, kind, name, hint in (
+            (self.open_folder, 'folder', tr('Файлы результата'), tr('Открыть файл или папку с результатом')),
+            (self.result_timestamps, 'timestamps', tr('Таймкоды'),
+             tr('Включить или выключить таймкоды в тексте и файлах результата')),
+            (self.share, 'share', tr('Поделиться файлом'),
+             tr('Перетащите файл в открытый чат или нажмите, чтобы открыть варианты передачи')),
+            (self.copy, 'copy', tr('Копировать текст'), tr('Копировать всю расшифровку в буфер обмена')),
+        ):
+            control.setText('')
+            control.setObjectName('liveTool')
+            control.setIcon(line_icon(kind, 28))
+            control.setProperty('icon_kind', kind)
+            control.setIconSize(QSize(24, 24))
+            control.setFixedSize(38, 38)
+            control.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            control.setAccessibleName(name)
+            control.setToolTip(hint)
+            control.setEnabled(False)
+            toolbar.addWidget(control)
+        layout.addLayout(AlignedRow([self.result_heading], [self.result_toolbar]))
         self.result_title = label('', 'muted')
         self.result_title.setProperty('userContent', True)
         self.result_title.setWordWrap(True)
@@ -417,14 +444,15 @@ class MainWindow(QMainWindow):
         self.preview.setObjectName('transcript')
         self.preview.setReadOnly(True)
         layout.addWidget(self.preview, 1)
-        self.open_folder = button(tr('Открыть папку с результатом  ↗'), self.open_result_folder)
-        self.open_txt = button(tr('Открыть TXT'), lambda: self.open_path(self.result.txt))
-        self.open_md = button(tr('Открыть Markdown'), lambda: self.open_path(self.result.markdown))
+        self.result_files = QMenu(self)
+        self.open_md = self.result_files.addAction(tr('Открыть Markdown'), lambda: self.open_path(self.result.markdown))
+        self.open_txt = self.result_files.addAction(tr('Открыть TXT'), lambda: self.open_path(self.result.txt))
+        self.result_files.addSeparator()
+        self.folder_action = self.result_files.addAction(tr('Открыть папку'), self.open_result_folder)
         self.exit_button = button(tr('Выход из приложения'), self.close)
         self.exit_button.setObjectName('exit')
         self.new_button = button(tr('Ещё одна расшифровка  →'), self.go_home, primary=True)
-        layout.addLayout(AlignedRow([self.exit_button, self.open_folder],
-                                    [self.open_md, self.open_txt, self.new_button]))
+        layout.addLayout(AlignedRow([self.exit_button], [self.new_button]))
         return page
 
     def navigate(self, index, animate=True):
@@ -472,10 +500,28 @@ class MainWindow(QMainWindow):
         self.advanced.hide()
         self.more.setText(tr('Дополнительные настройки  +'))
         self.copy_reset.stop()
-        self.copy.setText(tr('Копировать текст'))
-        self.copy.setEnabled(False)
-        self.share.setEnabled(False)
+        self.copy.setToolTip(tr('Копировать всю расшифровку в буфер обмена'))
+        for control in (self.copy, self.share, self.open_folder, self.result_timestamps):
+            control.setEnabled(False)
+        self.result_timestamps.setChecked(False)
         self.navigate(0)
+
+    def show_result_files(self):
+        if self.result is not None:
+            self.result_files.popup(self.open_folder.mapToGlobal(self.open_folder.rect().bottomLeft()))
+
+    def toggle_result_timestamps(self, enabled):
+        if self.result is None or self.result.segments is None:
+            return
+        try:
+            self.result.set_timestamps(enabled)
+        except OSError as error:
+            self.result_timestamps.setChecked(not enabled)
+            QMessageBox.warning(self, tr('Не удалось обновить таймкоды'), str(error))
+            return
+        scroll = self.preview.verticalScrollBar().value()
+        self.preview.setPlainText(self.result.text)
+        self.preview.verticalScrollBar().setValue(scroll)
 
     def share_result_file(self):
         if self.result is None:
@@ -613,8 +659,13 @@ class MainWindow(QMainWindow):
         self.result_title.setText(result.title)
         self.open_txt.setVisible(result.txt is not None)
         self.open_md.setVisible(result.markdown is not None)
+        self.open_folder.setEnabled(result.txt is not None or result.markdown is not None)
+        self.result_timestamps.setChecked(self.timestamps.isChecked())
+        self.result_timestamps.setEnabled(result.segments is not None)
+        self.copy_reset.stop()
+        self.copy.setToolTip(tr('Копировать всю расшифровку в буфер обмена'))
         self.copy.setEnabled(True)
-        self.share.setEnabled(True)
+        self.share.setEnabled(result.txt is not None or result.markdown is not None)
         self.navigate(3)
 
     @Slot(str)
@@ -658,7 +709,7 @@ class MainWindow(QMainWindow):
 
     def copy_text(self):
         QApplication.clipboard().setText(self.preview.toPlainText())
-        self.copy.setText(tr('Скопировано'))
+        self.copy.setToolTip(tr('Скопировано'))
         self.copy_reset.start(1800)
 
     def open_result_folder(self):

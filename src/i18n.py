@@ -140,6 +140,10 @@ PAIRS = [
     ('Распознаём речь', 'Transcribing speech'), ('Сохраняем оставшийся звук', 'Saving remaining audio'),
     ('Слушаем: {device}', 'Listening: {device}'),
     ('Сеанс завершён, текст доступен в окне без сохранения', 'Session complete, text available in the window without saving'),
+    ('Файлы результата', 'Result files'),
+    ('Открыть файл или папку с результатом', 'Open a result file or folder'),
+    ('Включить или выключить таймкоды в тексте и файлах результата', 'Toggle timestamps in the transcript and result files'),
+    ('Не удалось обновить таймкоды', 'Could not update timestamps'),
     ('Тёмная / светлая тема', 'Dark / light theme'), ('Язык интерфейса: русский / английский', 'Interface language: Russian / English'),
 ]
 

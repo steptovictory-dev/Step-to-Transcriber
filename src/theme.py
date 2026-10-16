@@ -61,6 +61,10 @@ QProgressBar::chunk { background: #d39362; border-radius: 4px; }
 QScrollBar:vertical { background: #282622; width: 9px; margin: 0; }
 QScrollBar::handle:vertical { background: #6b5745; border-radius: 4px; min-height: 25px; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QMenu { background: #2b2926; color: #eee7dd; border: 1px solid #5a4c3e; border-radius: 8px; padding: 5px; }
+QMenu::item { padding: 9px 18px; border-radius: 4px; }
+QMenu::item:selected { background: #44382e; }
+QMenu::separator { height: 1px; background: #484039; margin: 4px 8px; }
 QToolTip { background: #342c25; color: #eee7dd; border: 1px solid #8e6443; padding: 6px; }
 '''
 
@@ -97,4 +101,4 @@ def theme_style(mode='dark'):
     if mode != 'light':
         return STYLE
     import re
-    return re.sub(r'#[0-9a-fA-F]{6}', lambda match: LIGHT_COLORS.get(match[0].lower(), match[0]), STYLE)
+    return re.sub(r'#[0-9a-fA-F]{6}', lambda match: LIGHT_COLORS.get(match[0].lower(), match[0]), STYLE) + '\nQPushButton#liveTool:checked { background: #e7d6bc; border-color: #b19472; }'

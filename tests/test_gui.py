@@ -127,8 +127,8 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.window.share_result_file(), Path('result.md'))
         self.window.copy_text()
         self.assertEqual(self.app.clipboard().text(), 'Только Markdown')
-        self.assertTrue(self.window.open_txt.isHidden())
-        self.assertFalse(self.window.open_md.isHidden())
+        self.assertTrue((not self.window.open_txt.isVisible()))
+        self.assertFalse((not self.window.open_md.isVisible()))
         self.window.format.setCurrentIndex(2)
         self.window.new_button.click()
         self.assertEqual(self.window.pages.currentIndex(), 0)
@@ -161,6 +161,89 @@ class GuiTests(unittest.TestCase):
         self.window.go_home()
         self.assertTrue(self.window.timestamps.isChecked())
         self.assertFalse(self.window.timestamps_off.isChecked())
+
+    def test_result_toolbar_updates_text_exports_and_clipboard_for_both_sources(self):
+        from src.transcriber import TranscriptSegment
+        for remote in (False, True):
+            for initial in (False, True):
+                with self.subTest(remote=remote, initial=initial), tempfile.TemporaryDirectory() as temporary:
+                    self.window.select_source(remote)
+                    self.window.timestamps.setChecked(initial)
+                    directory = Path(temporary)
+                    result = Result(directory / 'test.txt', directory / 'test.md', 'Title',
+                                    segments=[TranscriptSegment(65, 66, 'First paragraph'),
+                                              TranscriptSegment(110, 111, 'Second paragraph')],
+                                    source='https://youtu.be/BaW_jenozKc' if remote else None)
+                    result.txt.touch()
+                    result.markdown.touch()
+                    result.set_timestamps(initial)
+                    self.window.completed(result)
+                    self.assertEqual(self.window.result_timestamps.isChecked(), initial)
+                    for enabled in (not initial, initial):
+                        self.window.result_timestamps.click()
+                        self.assertEqual(self.window.result_timestamps.isChecked(), enabled)
+                        self.assertEqual('[00:01:05]' in self.window.preview.toPlainText(), enabled)
+                        self.assertEqual('[00:01:05]' in result.txt.read_text(encoding='utf-8'), enabled)
+                        self.assertEqual('**[00:01:05]**' in result.markdown.read_text(encoding='utf-8'), enabled)
+                        self.assertIn('# Title', result.markdown.read_text(encoding='utf-8'))
+                        if remote:
+                            self.assertIn(result.source, result.markdown.read_text(encoding='utf-8'))
+                        self.app.processEvents()
+                        self.window.copy.click()
+                        QTest.qWait(20)
+                        self.assertEqual(self.app.clipboard().text(), self.window.preview.toPlainText())
+                        self.assertEqual(self.window.copy.text(), '')
+                        self.assertEqual(self.window.share_result_file(), result.markdown)
+
+    def test_result_timestamp_failure_restores_toggle_text_and_files(self):
+        from src.transcriber import TranscriptSegment
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            result = Result(directory / 'test.txt', directory / 'test.md', 'Title',
+                            segments=[TranscriptSegment(65, 66, 'Preserve this text')])
+            result.txt.touch()
+            result.markdown.touch()
+            result.set_timestamps(True)
+            self.window.completed(result)
+            originals = {path: path.read_bytes() for path in (result.txt, result.markdown)}
+            original_text = self.window.preview.toPlainText()
+            replace = Path.replace
+
+            def fail_second_export(source, target):
+                if source.name == 'test.md':
+                    raise PermissionError('File is locked')
+                return replace(source, target)
+
+            with patch.object(Path, 'replace', fail_second_export), patch('src.gui.QMessageBox.warning') as warning:
+                self.window.result_timestamps.click()
+            warning.assert_called_once()
+            self.assertTrue(self.window.result_timestamps.isChecked())
+            self.assertEqual(self.window.preview.toPlainText(), original_text)
+            self.assertEqual(result.text, original_text)
+            for path, original in originals.items():
+                self.assertEqual(path.read_bytes(), original)
+            self.assertEqual(set(directory.iterdir()), set(originals))
+
+    def test_result_file_menu_and_toolbar_follow_language_and_reset(self):
+        self.window.completed(Result(None, Path('test.md'), 'Title', 'Original speech'))
+        self.window.language_switch.click()
+        self.window.theme_switch.click()
+        self.assertEqual(self.window.open_md.text(), 'Open Markdown')
+        self.assertEqual(self.window.folder_action.text(), 'Open folder')
+        self.assertTrue(self.window.open_md.isVisible())
+        self.assertFalse(self.window.open_txt.isVisible())
+        self.assertEqual(self.window.preview.toPlainText(), 'Original speech')
+        self.window.copy.click()
+        self.assertEqual(self.window.copy.toolTip(), 'Copied')
+        for control in (self.window.copy, self.window.share, self.window.open_folder,
+                        self.window.result_timestamps):
+            self.assertEqual(control.text(), '')
+            self.assertEqual(control.width(), 38)
+            self.assertTrue(control.accessibleName())
+        self.window.new_button.click()
+        self.assertFalse(self.window.open_folder.isEnabled())
+        self.assertFalse(self.window.result_timestamps.isEnabled())
+        self.assertFalse(self.window.copy.isEnabled())
 
     def test_source_cards_route_to_correct_setup(self):
         self.window.go_home()

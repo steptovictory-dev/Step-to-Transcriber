@@ -1,0 +1,7 @@
+# Step to Transcriber icon
+
+Approved app icon generated with the built-in imagegen tool on 2026-10-15. The PNG is the original artwork; the ICO packages it at 16, 20, 24, 32, 40, 48, 64, 96, 128 and 256 pixels for Windows. Transparent corners are preserved.
+
+## Generation prompt
+
+Use case: logo-brand. Asset type: final Windows desktop application icon, square 1024x1024, one icon only. Design a beautiful premium icon for Step to Transcriber, a local audio transcription application. A bold, immediately readable copper orange audio waveform that transitions into three short horizontal text strokes, unified as one compact geometric symbol. The symbol sits on a rounded square charcoal warm stone tile, inspired by understated premium vintage audio hardware finishes, not copying any brand logo. Palette: background warm graphite #22211f and #2b2926, brushed copper #cf8851, bright copper highlight #e2a878, a little deep bronze for dimensional depth. Restrained soft bevels, finely crafted copper metal, subtle directional top-left lighting, mostly flat frontal composition, crisp generous strokes, strong contrast, excellent recognition at 16, 32 and 48 pixels. Tile fills 90 percent of square, perfectly centered, rounded corners; keep outside tile genuinely transparent. Minimal and elegant, not ornate, no photoreal scene or presentation mockup. No text, no letters, no tiny details, no microphones, no headphones, no extraneous props, no watermarks, no detached shadow beyond icon tile. Deliver one clean isolated production-ready icon.

@@ -1,0 +1,559 @@
+"""Embedded live-transcription page using the application's copper theme."""
+
+import logging
+from datetime import datetime
+from pathlib import Path
+
+from src.i18n import tr
+from uuid import uuid4
+
+from PySide6.QtCore import QEvent, QSize, QThread, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QTextCursor
+from PySide6.QtMultimedia import QMediaDevices
+from PySide6.QtWidgets import (
+    QApplication, QButtonGroup, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPlainTextEdit, QProgressBar, QSizePolicy, QVBoxLayout, QWidget,
+)
+
+from src.gui import ROOT, button, label
+from src.live import LiveJob, output_devices, run_live, timestamp
+from src.sharing import ShareFileButton
+from src.theme import theme_style
+from src.widgets import line_icon
+
+
+class LiveWorker(QThread):
+    status = Signal(str)
+    paragraph = Signal(float, str)
+    meter = Signal(float, float)
+    saved = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, job, parent=None):
+        super().__init__(parent)
+        self.job = job
+        self.requested_device = job.device
+
+    def run(self):
+        try:
+            run_live(self.job, self.isInterruptionRequested, self.status.emit,
+                     self.paragraph.emit, self.meter.emit, self.saved.emit,
+                     selection=lambda: self.requested_device)
+        except Exception as error:
+            logging.exception('Live session failed')
+            self.failed.emit(str(error))
+
+
+class TranscriptWindow(QWidget):
+    """Independent text view controlling the existing live session."""
+
+    def __init__(self, live):
+        super().__init__(None, Qt.WindowType.Window)
+        self.live = live
+        self.setObjectName('shell')
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        self.setWindowTitle(tr('Текст эфира / Step to Transcriber'))
+        self.setWindowIcon(live.host.windowIcon())
+        self.setStyleSheet(theme_style(live.host.ui_theme))
+        self.resize(900, 620)
+        self.setMinimumSize(880, 360)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+        self.preview = QPlainTextEdit()
+        self.preview.setObjectName('transcript')
+        self.preview.setReadOnly(True)
+        self.preview.setPlaceholderText(tr('Здесь появится текст эфира'))
+        self.preview.setPlainText(live.preview.toPlainText())
+        layout.addWidget(self.preview, 1)
+        actions = QHBoxLayout()
+        actions.setSpacing(12)
+        self.start = button(tr('Начать расшифровку'), self.start_session, primary=True)
+        self.stop = button(tr('Остановить'), live.stop.click)
+        self.stop.setObjectName('exit')
+        self.timestamps = button(tr('Добавить таймкоды'), live.timestamps.click)
+        self.timestamps.setCheckable(True)
+        self.timestamps.setChecked(live.timestamps.isChecked())
+        self.timestamps.setToolTip(live.timestamps.toolTip())
+        self.copy = button(tr('Копировать текст'), live.copy_text)
+        self.share = ShareFileButton(live.create_share_file, tr('Поделиться'))
+        self.share.setEnabled(not live.preview.document().isEmpty())
+        live.preview.textChanged.connect(
+            lambda: self.share.setEnabled(not live.preview.document().isEmpty()))
+        actions.addWidget(self.start)
+        actions.addWidget(self.stop)
+        actions.addStretch()
+        actions.addWidget(self.timestamps)
+        actions.addWidget(self.share)
+        actions.addWidget(self.copy)
+        layout.addLayout(actions)
+        live.preview.document().contentsChange.connect(self.sync_text_change)
+        live.start.installEventFilter(self)
+        live.stop.installEventFilter(self)
+        live.timestamps.installEventFilter(self)
+        live.timestamps.toggled.connect(self.timestamps.setChecked)
+        self.sync_controls()
+
+    def start_session(self):
+        self.live.start.click()
+        if self.live.worker is None:
+            self.show_settings()
+
+    def show_settings(self):
+        self.live.host.open_live()
+        if self.live.host.isMinimized():
+            self.live.host.showNormal()
+        else:
+            self.live.host.show()
+        self.live.host.raise_()
+        self.live.host.activateWindow()
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.EnabledChange:
+            self.sync_controls()
+        return super().eventFilter(watched, event)
+
+    def sync_controls(self):
+        self.start.setEnabled(self.live.start.isEnabled())
+        self.stop.setEnabled(self.live.stop.isEnabled())
+        self.timestamps.setEnabled(self.live.timestamps.isEnabled())
+
+    def sync_text_change(self, position, removed, added):
+        scrollbar = self.preview.verticalScrollBar()
+        previous = scrollbar.value()
+        follow = previous >= scrollbar.maximum() - 5
+        source = QTextCursor(self.live.preview.document())
+        source.setPosition(position)
+        source.setPosition(min(position + added, source.document().characterCount() - 1),
+                           QTextCursor.MoveMode.KeepAnchor)
+        target = QTextCursor(self.preview.document())
+        target.setPosition(min(position, target.document().characterCount() - 1))
+        target.setPosition(min(position + removed, target.document().characterCount() - 1),
+                           QTextCursor.MoveMode.KeepAnchor)
+        target.removeSelectedText()
+        target.insertFragment(source.selection())
+        scrollbar.setValue(scrollbar.maximum() if follow else previous)
+
+
+class LivePage(QWidget):
+    session_finished = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.host = parent
+        self.worker = None
+        self.transcript_window = None
+        self.paths = []
+        self.error = False
+        self.session_timestamps = False
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(36, 14, 36, 14)
+        outer.setSpacing(18)
+        title = QHBoxLayout()
+        title.setSpacing(12)
+        self.back = button(tr('‹  Выбор источника'), self.host.go_home)
+        self.back.setObjectName('quiet')
+        title.addWidget(self.back)
+        title.addStretch()
+        self.detach = button(tr('Открыть в отдельном окне'), self.open_transcript_window)
+        self.toolbar = QWidget()
+        self.toolbar.setObjectName('liveToolbar')
+        toolbar = QHBoxLayout(self.toolbar)
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setSpacing(4)
+        title.addWidget(self.toolbar)
+
+        columns = QGridLayout()
+        columns.setHorizontalSpacing(24)
+        columns.setVerticalSpacing(18)
+        columns.setColumnStretch(0, 1)
+        columns.setRowStretch(1, 1)
+        columns.addLayout(title, 0, 0)
+        words = QVBoxLayout()
+        words.setSpacing(12)
+
+        self.preview = QPlainTextEdit()
+        self.preview.setObjectName('transcript')
+        self.preview.setReadOnly(True)
+        self.preview.setMinimumWidth(0)
+        self.preview.setMinimumHeight(180)
+        empty_layout = QVBoxLayout(self.preview.viewport())
+        empty_layout.setContentsMargins(24, 24, 24, 24)
+        empty_layout.addStretch()
+        self.empty_state = QWidget()
+        self.empty_state.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.empty_state.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        empty_text = QVBoxLayout(self.empty_state)
+        empty_text.setContentsMargins(0, 0, 0, 0)
+        empty_text.setSpacing(14)
+        empty_title = label(tr('Живой эфир становится текстом'), 'liveEmptyTitle')
+        empty_hint = label(tr('Запустите эфир и нажмите «Начать расшифровку»,\n'
+                           'чтобы увидеть расшифровку'), 'small')
+        for item in (empty_title, empty_hint):
+            item.setWordWrap(True)
+            item.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_text.addWidget(item)
+        empty_layout.addWidget(self.empty_state)
+        empty_layout.addStretch()
+        self.preview.textChanged.connect(
+            lambda: self.empty_state.setVisible(self.preview.document().isEmpty()))
+        words.addWidget(self.preview, 1)
+        self.files = label('', 'small')
+        self.files.setWordWrap(True)
+        self.files.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.files.setMinimumWidth(0)
+        self.files.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        words.addWidget(self.files)
+        self.share = ShareFileButton(self.create_share_file)
+        self.share.setEnabled(False)
+        self.preview.textChanged.connect(
+            lambda: self.share.setEnabled(not self.preview.document().isEmpty()))
+        self.files.hide()
+        self.folder = button(tr('Открыть папку'), self.open_folder)
+        self.folder.setEnabled(False)
+        self.copy = button(tr('Копировать текст'), self.copy_text)
+        self.timestamps = button(tr('Добавить таймкоды'), lambda: None)
+        self.timestamps.setCheckable(True)
+        self.timestamps.setToolTip(tr('Таймкоды в окне, копируемом тексте и файлах следующего сеанса'))
+        for control, kind, name, hint in (
+            (self.folder, 'folder', tr('Открыть папку'), tr('Открыть папку с файлами текущего эфира')),
+            (self.timestamps, 'timestamps', tr('Добавить таймкоды'),
+             tr('Включить таймкоды в тексте и файлах следующего сеанса')),
+            (self.share, 'share', tr('Поделиться файлом'),
+             tr('Поделиться TXT-снимком расшифровки: нажмите или перетащите в чат')),
+            (self.copy, 'copy', tr('Копировать текст'), tr('Копировать всю расшифровку в буфер обмена')),
+            (self.detach, 'detach', tr('Открыть в отдельном окне'),
+             tr('Открыть текст эфира в отдельном окне')),
+        ):
+            control.setText('')
+            control.setObjectName('liveTool')
+            control.setIcon(line_icon(kind, 28))
+            control.setProperty('icon_kind', kind)
+            control.setIconSize(QSize(24, 24))
+            control.setFixedSize(38, 38)
+            control.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+            control.setAccessibleName(name)
+            control.setToolTip(hint)
+            toolbar.addWidget(control)
+        self.timestamps.toggled.connect(lambda enabled: self.timestamps.setToolTip(
+            tr('Таймкоды включены. Нажмите, чтобы выключить для следующего сеанса') if enabled
+            else tr('Включить таймкоды в тексте и файлах следующего сеанса')))
+        columns.addLayout(words, 1, 0)
+
+        panel = QFrame()
+        panel.setObjectName('panel')
+        panel.setFixedWidth(440)
+        settings = QVBoxLayout(panel)
+        panel.setStyleSheet('QComboBox { padding: 7px 24px 7px 10px; } '
+                            'QLineEdit { padding: 9px 10px; } '
+                            'QPushButton { padding: 9px 12px; }')
+        settings.setContentsMargins(20, 16, 20, 16)
+        settings.setSpacing(7)
+        settings.addWidget(label(tr('НАСТРОЙКИ ЭФИРА'), 'eyebrow'))
+        device_group = QVBoxLayout()
+        device_group.setSpacing(6)
+        device_group.addWidget(label(tr('Звук компьютера'), 'small'))
+        device_row = QHBoxLayout()
+        device_row.setSpacing(10)
+        self.device = QComboBox()
+        self.device.currentIndexChanged.connect(self.device_changed)
+        self.device.setMinimumWidth(0)
+        self.device.setMinimumContentsLength(10)
+        self.device.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.refresh = button(tr('Обновить'), self.refresh_devices)
+        device_row.addWidget(self.device, 1)
+        device_row.addWidget(self.refresh)
+        device_group.addLayout(device_row)
+        settings.addLayout(device_group)
+
+        options = QHBoxLayout()
+        options.setSpacing(12)
+        language_group = QVBoxLayout()
+        language_group.setSpacing(6)
+        language_group.addWidget(label(tr('Язык речи'), 'small'))
+        self.language = QComboBox()
+        for text, value in ((tr('Автоматически'), None), (tr('Русский'), 'ru'), ('English', 'en')):
+            self.language.addItem(text, value)
+        language_group.addWidget(self.language)
+        format_group = QVBoxLayout()
+        format_group.setSpacing(6)
+        format_group.addWidget(label(tr('Формат файла'), 'small'))
+        self.formats = QComboBox()
+        for text, value in (('Markdown (.md)', ('md',)), (tr('Текст (.txt)'), ('txt',)),
+                            ('MD + TXT', ('md', 'txt'))):
+            self.formats.addItem(text, value)
+        format_group.addWidget(self.formats)
+        options.addLayout(language_group, 1)
+        options.addLayout(format_group, 1)
+        settings.addLayout(options)
+
+        saving = QHBoxLayout()
+        saving.setSpacing(10)
+        self.autosave = button(tr('Автосохранение'), lambda: None)
+        self.no_save = button(tr('Не сохранять'), lambda: None)
+        self.saving_mode = QButtonGroup(self)
+        for control in (self.autosave, self.no_save):
+            control.setCheckable(True)
+            self.saving_mode.addButton(control)
+            saving.addWidget(control, 1)
+        self.autosave.setChecked(True)
+        self.autosave.toggled.connect(self.update_saving_controls)
+        settings.addLayout(saving)
+        output_group = QVBoxLayout()
+        output_group.setSpacing(6)
+        output_group.addWidget(label(tr('Папка результатов'), 'small'))
+        output_row = QHBoxLayout()
+        output_row.setSpacing(10)
+        self.output = QLineEdit(self.host.output_directory())
+        self.output.textChanged.connect(self.host.remember_output_directory)
+        self.output.setMinimumWidth(0)
+        self.browse = button(tr('Изменить'), self.choose_output)
+        output_row.addWidget(self.output, 1)
+        output_row.addWidget(self.browse)
+        output_group.addLayout(output_row)
+        settings.addLayout(output_group)
+        activity_title = QHBoxLayout()
+        activity_title.setSpacing(12)
+        activity_title.addWidget(label(tr('УРОВЕНЬ ЗВУКА'), 'eyebrow'))
+        activity_title.addStretch()
+        self.backlog = label(tr('Ожидание начала'), 'small')
+        activity_title.addWidget(self.backlog)
+        settings.addLayout(activity_title)
+        self.level = QProgressBar()
+        self.level.setRange(0, 100)
+        self.level.setValue(0)
+        self.level.setTextVisible(False)
+        settings.addWidget(self.level)
+        self.status = label(tr('Подготовка списка устройств'), 'small')
+        self.status.setWordWrap(True)
+        self.status.setMinimumWidth(0)
+        self.status.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        settings.addWidget(self.status)
+        description = label(tr('Весь звук выбранного выхода, включая уведомления\n'
+                            'Модель turbo / локальная обработка'), 'small')
+        description.setWordWrap(True)
+        settings.addWidget(description)
+        settings.addStretch(1)
+        actions = QHBoxLayout()
+        actions.setSpacing(12)
+        self.start = button(tr('Начать расшифровку'), self.start_session, primary=True)
+        self.stop = button(tr('Остановить'), self.stop_session)
+        self.stop.setObjectName('exit')
+        self.stop.setToolTip(tr('Остановить захват и сохранить оставшийся текст'))
+        self.stop.setEnabled(False)
+        actions.addWidget(self.start, 3)
+        actions.addWidget(self.stop, 2)
+        settings.addLayout(actions)
+        columns.addWidget(panel, 1, 1)
+        outer.addLayout(columns, 1)
+
+        self.level_timer = QTimer(self)
+        self.level_timer.setInterval(250)
+        self.level_timer.timeout.connect(self.update_meter)
+        self.current_level = 0.0
+        self.current_backlog = 0.0
+        self.level_updated = 0.0
+        self.media_devices = QMediaDevices(self)
+        self.media_devices.audioOutputsChanged.connect(self.windows_device_changed)
+        QTimer.singleShot(0, self.refresh_devices)
+
+    def open_transcript_window(self):
+        if self.transcript_window is None:
+            self.transcript_window = TranscriptWindow(self)
+        self.transcript_window.show()
+        if self.transcript_window.isMinimized():
+            self.transcript_window.showNormal()
+        self.transcript_window.raise_()
+        self.transcript_window.activateWindow()
+
+    def refresh_devices(self):
+        if self.worker:
+            return
+        previous = self.device.currentData()
+        self.device.blockSignals(True)
+        self.device.clear()
+        default_name = QMediaDevices.defaultAudioOutput().description() or tr('выход не выбран')
+        self.device.addItem(tr('Windows по умолчанию: ') + default_name,
+                            {'name': tr('Устройство Windows по умолчанию'), 'automatic': True,
+                             'endpoint': bytes(QMediaDevices.defaultAudioOutput().id()).hex()})
+        try:
+            devices = output_devices()
+            selected = 0
+            for index, device in enumerate(devices, start=1):
+                name = device['name'].removesuffix(' [Loopback]')
+                self.device.addItem(name + (tr(' (Windows по умолчанию)') if device['default'] else ''), device)
+            if previous and not previous.get('automatic'):
+                selected = next((index for index, device in enumerate(devices, start=1)
+                                 if device['name'] == previous['name']), selected)
+            self.device.setCurrentIndex(selected)
+            self.device.setToolTip(self.device.currentText())
+            self.start.setEnabled(bool(devices))
+            self.status.setText(tr('Включите звук на выбранном устройстве и нажмите «Начать расшифровку»')
+                                if devices else tr('Windows не обнаружил выход звука. Подключите наушники или колонки и нажмите «Обновить»'))
+        except Exception as error:
+            self.start.setEnabled(False)
+            self.status.setText(tr(str(error)))
+        finally:
+            self.device.blockSignals(False)
+
+    def device_changed(self):
+        if self.worker and self.device.currentData():
+            self.worker.requested_device = self.device.currentData()
+            self.status.setText(tr('Переключаем захват на выбранное устройство'))
+
+    def windows_device_changed(self):
+        if self.worker:
+            selected = self.device.currentData()
+            if selected and selected.get('automatic'):
+                updated = dict(selected, endpoint=bytes(QMediaDevices.defaultAudioOutput().id()).hex())
+                self.device.setItemData(self.device.currentIndex(), updated)
+                self.device.setItemText(self.device.currentIndex(), tr('Windows по умолчанию: ') +
+                                        QMediaDevices.defaultAudioOutput().description())
+                self.worker.requested_device = updated
+        else:
+            self.refresh_devices()
+
+    def choose_output(self):
+        path = QFileDialog.getExistingDirectory(self, tr('Папка живых расшифровок'), self.output.text())
+        if path:
+            self.output.setText(path)
+
+    def start_session(self):
+        if self.worker or not self.device.currentData():
+            return
+        if self.host.worker:
+            self.status.setText(tr('Дождитесь окончания расшифровки записи'))
+            return
+        if self.autosave.isChecked() and not self.output.text().strip():
+            self.status.setText(tr('Выберите папку результатов'))
+            return
+        self.preview.clear()
+        self.paths = []
+        self.files.clear()
+        self.files.hide()
+        self.folder.setEnabled(False)
+        self.error = False
+        self.session_timestamps = self.timestamps.isChecked()
+        self.set_running(True)
+        job = LiveJob(self.device.currentData(), Path(self.output.text().strip()),
+                      self.formats.currentData(), self.language.currentData(), self.session_timestamps,
+                      autosave=self.autosave.isChecked())
+        self.worker = LiveWorker(job, self)
+        self.worker.status.connect(self.set_status)
+        self.worker.paragraph.connect(self.add_paragraph)
+        self.worker.meter.connect(self.receive_meter)
+        self.worker.saved.connect(self.saved_paths)
+        self.worker.failed.connect(self.failed)
+        self.worker.finished.connect(self.finished)
+        self.status.setText(tr('Подготавливаем модель'))
+        self.level_timer.start()
+        self.worker.start()
+
+    def set_running(self, running):
+        for widget in (self.back, self.refresh, self.language, self.formats, self.timestamps, self.autosave, self.no_save):
+            widget.setEnabled(not running)
+        self.update_saving_controls()
+        self.start.setEnabled(not running and self.device.count() > 0)
+        self.stop.setEnabled(running)
+
+    def update_saving_controls(self):
+        enabled = self.autosave.isChecked() and self.back.isEnabled()
+        for control in (self.formats, self.output, self.browse):
+            control.setEnabled(enabled)
+
+    def set_status(self, text):
+        if self.stop.isEnabled():
+            self.status.setText(tr(text))
+
+    def add_paragraph(self, seconds, text):
+        scrollbar = self.preview.verticalScrollBar()
+        follow = scrollbar.value() >= scrollbar.maximum() - 5
+        previous = scrollbar.value()
+        prefix = f'[{timestamp(seconds)}] ' if self.session_timestamps else ''
+        text = ' '.join(text.split())
+        if not text:
+            return
+        previous_block = self.preview.document().lastBlock().text()
+        note = text.startswith('[') and text.endswith(']')
+        previous_note = previous_block.startswith('[') and previous_block.endswith(']')
+        if previous_block and not self.session_timestamps and not note and not previous_note:
+            cursor = QTextCursor(self.preview.document())
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertText(' ' + text)
+        else:
+            self.preview.appendPlainText(prefix + text)
+        scrollbar.setValue(scrollbar.maximum() if follow else previous)
+
+    def saved_paths(self, paths):
+        self.paths = paths
+        self.files.setVisible(bool(paths))
+        self.files.setText(tr('Файлы сеанса: ') + '\n'.join(str(path) for path in paths))
+        self.folder.setEnabled(bool(paths))
+
+    def receive_meter(self, level, backlog):
+        import time
+        self.current_level = level
+        self.current_backlog = backlog
+        self.level_updated = time.monotonic()
+
+    def update_meter(self):
+        import time
+        level = self.current_level if time.monotonic() - self.level_updated < 1.0 else 0.0
+        self.level.setValue(min(100, int(level * 400)))
+        self.backlog.setText(tr(f'Очередь звука: {self.current_backlog:.0f} с'))
+
+    def failed(self, text):
+        self.error = True
+        self.status.setText(tr(text) + (tr('\nУже полученный текст сохранён в файлах сеанса') if self.paths else ''))
+        if self.transcript_window and self.transcript_window.isVisible():
+            self.transcript_window.show_settings()
+
+    def stop_session(self):
+        if self.worker:
+            self.worker.requestInterruption()
+            self.stop.setEnabled(False)
+            self.status.setText(tr('Останавливаем захват и распознаём оставшийся звук'))
+
+    def finished(self):
+        self.level_timer.stop()
+        self.level.setValue(0)
+        self.backlog.setText(tr('Сеанс остановлен'))
+        self.worker.deleteLater()
+        self.worker = None
+        self.set_running(False)
+        if not self.error:
+            self.status.setText(tr('Сеанс завершён, расшифровка сохранена') if self.paths else
+                                tr('Сеанс завершён, текст доступен для копирования') if self.preview.toPlainText() else
+                                tr('Сеанс остановлен до начала захвата'))
+        self.session_finished.emit()
+
+    def copy_text(self):
+        QApplication.clipboard().setText(self.preview.toPlainText())
+
+    def create_share_file(self):
+        text = self.preview.toPlainText()
+        if not text.strip():
+            raise ValueError(tr('Пока нет текста для передачи'))
+        directory = ROOT / 'output' / 'shared'
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f'Эфир_{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:6]}.txt'
+        path.write_text(text + '\n', encoding='utf-8')
+        return path
+
+    def open_folder(self):
+        if self.paths:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.paths[0].parent.resolve())))
+
+
+
+
+
+
+
+
+
+
+
+
+
+

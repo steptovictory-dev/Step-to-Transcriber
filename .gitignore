@@ -1,0 +1,48 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# VS Code
+.vscode/
+
+# Generated files
+input/
+output/
+*.log
+
+# Local project checkpoints
+00_Checkpoint/
+Checkpoint/
+checkpoints/
+CP-*.md
+CP-*.pdf
+
+# Media files
+*.mp4
+*.mkv
+*.mov
+*.webm
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.ogg
+*.opus
+
+# Environment variables
+.env
+
+# Test cache
+.pytest_cache/
+
+# PyInstaller
+build/
+dist/
+*.spec
+!packaging/*.spec
+
+# Local JavaScript runtime for YouTube
+tools/

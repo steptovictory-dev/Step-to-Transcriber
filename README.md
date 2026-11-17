@@ -65,4 +65,4 @@
 
 ---
 
-[Техническая документация для разработчиков](docs/DEVELOPMENT.md) · [steptovictory-dev на GitHub](https://github.com/steptovictory-dev)
+[Техническая документация для разработчиков](docs/DEVELOPMENT.md) · [Лицензия исходного кода MIT](LICENSE) · [steptovictory-dev на GitHub](https://github.com/steptovictory-dev)

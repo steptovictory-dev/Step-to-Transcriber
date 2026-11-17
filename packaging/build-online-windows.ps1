@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory)]
     [string]$NodeDist,
     [string]$Iscc = 'ISCC.exe',
+    [string]$OutputDirectory,
     [ValidatePattern('^\d+\.\d+\.\d+(-[A-Za-z0-9]+([.-][A-Za-z0-9]+)*)?$')]
     [string]$Version = '0.1.0'
 )
@@ -54,7 +55,8 @@ try {
     & $compiler '/DOnlineInstaller=1' "/DAppVersion=$Version" "/DBundleDir=$app" "/DRuntimeDir=$runtime" "/O$work" (Join-Path $PSScriptRoot 'windows.iss')
     if ($LASTEXITCODE) { throw 'Inno Setup failed.' }
     $name = "Step-to-Transcriber-$Version-Windows-x64-Web-Setup.exe"
-    $dist = (New-Item -ItemType Directory -Force -Path (Join-Path $project 'dist')).FullName
+    if (-not $OutputDirectory) { $OutputDirectory = Join-Path $project 'dist' }
+    $dist = (New-Item -ItemType Directory -Force -Path $OutputDirectory).FullName
     $destination = Join-Path $dist $name
     Move-Item -LiteralPath (Join-Path $work $name) -Destination $destination -Force
     Get-FileHash -LiteralPath $destination -Algorithm SHA256

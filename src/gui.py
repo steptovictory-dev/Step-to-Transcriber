@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.audio import get_audio_track_count
-from src.paths import DATA as ROOT, IS_BUNDLED, RESOURCES
+from src.paths import DATA as ROOT, IS_INSTALLED, RESOURCES
 from src.pipeline import Job, run_job
 from src.sharing import ShareFileButton
 from src.theme import theme_style
@@ -537,7 +537,7 @@ class MainWindow(QMainWindow):
         self.more.setText(tr('Скрыть настройки  −') if visible else tr('Дополнительные настройки  +'))
 
     def choose_file(self):
-        start_directory = Path.home() if IS_BUNDLED else ROOT / 'input'
+        start_directory = Path.home() if IS_INSTALLED else ROOT / 'input'
         path, _ = QFileDialog.getOpenFileName(self, tr('Выбрать аудио или видео'), str(start_directory), tr(MEDIA_FILTER))
         if path:
             self.source.setText(path)

@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QIcon
 
 from src.gui import MainWindow
-from src.paths import DATA, IS_BUNDLED, RESOURCES
+from src.paths import DATA, IS_INSTALLED, RESOURCES
 
 
 def configure_logging(root):
@@ -34,7 +34,7 @@ def main():
     app.setApplicationName('Step to Transcriber')
     app.setWindowIcon(QIcon(str(RESOURCES / 'assets' / 'step-to-transcriber.ico')))
     app.setStyle('Fusion')
-    settings = QSettings(str(DATA / 'settings.ini'), QSettings.Format.IniFormat) if IS_BUNDLED else None
+    settings = QSettings(str(DATA / 'settings.ini'), QSettings.Format.IniFormat) if IS_INSTALLED else None
     window = MainWindow(settings=settings)
     window.show()
     return app.exec()

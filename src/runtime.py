@@ -2,7 +2,7 @@ import os
 import sys
 from pathlib import Path
 
-from src.paths import IS_BUNDLED, RESOURCES
+from src.paths import IS_BUNDLED, IS_INSTALLED, RESOURCES
 
 
 _DLL_HANDLES = []
@@ -18,7 +18,7 @@ def configure_gpu_runtime() -> None:
         nvidia = Path(sys.prefix) / 'Lib' / 'site-packages' / 'nvidia'
 
     dll_directories = [nvidia / name / 'bin' for name in ('cublas', 'cudnn', 'cuda_nvrtc')]
-    if not IS_BUNDLED:
+    if not IS_INSTALLED:
         dll_directories.append(Path(r'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin'))
 
     existing_directories = [

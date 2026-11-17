@@ -22,7 +22,19 @@ CUDA-библиотеки cuBLAS, cuDNN и NVRTC загружаются из п�
 .\.venv\Scripts\python.exe main.py "..\input\recording.mp4"
 ```
 
-## Сборка установщика Windows
+## Сборка веб-установщика для GitHub Releases
+
+Публичный установщик включает встроенный Python, pip и Node.js. Мастер скачивает Python-пакеты с PyPI по списку `packaging/windows-online-requirements.txt` и сверяет SHA‑256 каждого пакета. Библиотеки Qt, FFmpeg и NVIDIA поступают напрямую от поставщиков пакетов. Для подготовки требуется подключение к интернету.
+
+Скачайте официальный Windows x64 embeddable ZIP Python 3.14.6, wheel pip 26.1.2 и ZIP Node.js 24.19.0. Сверьте контрольные суммы с опубликованными поставщиками. Распакуйте Node.js и передайте каталогу сборки путь к `node.exe` и `LICENSE`. [Python](https://www.python.org/downloads/release/python-3146/) · [pip на PyPI](https://pypi.org/project/pip/26.1.2/#files) · [Node.js](https://nodejs.org/en/blog/release/v24.19.0/) · [Inno Setup](https://jrsoftware.org/inno-setup/downloads)
+
+```powershell
+.\packaging\build-online-windows.ps1 -PythonZip 'C:\Tools\python-3.14.6-embed-amd64.zip' -PipWheel 'C:\Tools\pip-26.1.2-py3-none-any.whl' -NodeDist 'C:\Tools\node-v24.19.0-win-x64' -Iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' -Version '0.1.0'
+```
+
+Результат сохраняется в `dist` как `Step-to-Transcriber-<версия>-Windows-x64-Web-Setup.exe`. Установщик подготавливает зависимости во временном каталоге перед записью файлов приложения. Деинсталлятор Inno удаляет установленные файлы, а данные пользователя остаются в отдельном каталоге.
+
+## Сборка локального установщика PyInstaller
 
 Для сборки 0.1.0 использовались Python 3.14.6 x64, PyInstaller 6.22.3, Inno Setup 6.7.4 и Node.js 24.19.0 x64. Установите Inno Setup и распакуйте официальный ZIP Node.js для Windows x64 после сверки SHA‑256 с `SHASUMS256.txt`. Скрипту нужен каталог с `node.exe` и `LICENSE`. [Inno Setup](https://jrsoftware.org/inno-setup/downloads), [Node.js v24.19.0](https://nodejs.org/en/blog/release/v24.19.0/)
 
@@ -33,7 +45,7 @@ CUDA-библиотеки cuBLAS, cuDNN и NVRTC загружаются из п�
 
 [Скрипт сборки](../packaging/build-windows.ps1) формирует комплект приложения, сохраняет установщик в `dist` и выводит SHA‑256. [Спецификация PyInstaller](../packaging/windows.spec) настраивает сборку `onedir`, оставляет один согласованный набор CUDA-библиотек и исключает сторонние ICU DLL, чтобы Qt использовал системную ICU. [Сценарий Inno Setup](../packaging/windows.iss) оформляет мастер установки и удаления, создаёт ярлыки и регистрирует деинсталлятор для текущего пользователя.
 
-Из пакетов и архива Node.js включаются доступные лицензионные файлы. Подготовка публичного выпуска включает проверку условий распространения Qt, FFmpeg и NVIDIA. Установщик 0.1.0 без цифровой подписи.
+Из пакетов и архива Node.js включаются доступные лицензионные файлы. Публикация этой сборки с вложенными библиотеками потребует проверки условий распространения Qt, FFmpeg и NVIDIA. Сборки 0.1.0 без цифровой подписи.
 
 <details>
 <summary>Локальный launcher для разработки</summary>

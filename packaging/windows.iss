@@ -59,7 +59,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 #ifdef OnlineInstaller
 Source: "{#RuntimeDir}\*"; DestDir: "{tmp}\runtime"; Flags: dontcopy noencryption recursesubdirs
 Source: "windows-online-requirements.txt"; DestDir: "{tmp}"; Flags: dontcopy noencryption
-Source: "{tmp}\runtime\*"; DestDir: "{app}\python"; Flags: external ignoreversion recursesubdirs createallsubdirs
+; The desktop app uses Qt Widgets. The wheel also contains unused QML modules
+; with paths that can exceed the Windows limit inside the install directory.
+Source: "{tmp}\runtime\*"; DestDir: "{app}\python"; Excludes: "\Lib\site-packages\PySide6\qml,\Lib\site-packages\PySide6\qml\*"; Flags: external ignoreversion recursesubdirs
 Source: "{#BundleDir}\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
 #else
 Source: "{#BundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
